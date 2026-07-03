@@ -1,0 +1,91 @@
+{
+  "projectType": "saas",
+  "projectName": "Floralé",
+  "projectDescription": "Floralé is a handcrafted gift shop web application built with Next.js, featuring a customer-facing storefront with product catalog and WhatsApp-based checkout, and a Supabase-backed admin panel for managing products and categories.",
+  "theme": "willow",
+  "primaryColor": "#7c7c7c",
+  "lightColor": "#070707",
+  "darkColor": "#cdcdcd",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Guide",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Storefront",
+            "pages": [
+              "storefront/catalog",
+              "storefront/product-page",
+              "storefront/cart-checkout"
+            ]
+          },
+          {
+            "group": "Admin Panel",
+            "pages": [
+              "admin/overview",
+              "admin/products",
+              "admin/categories"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/supabase-setup",
+              "configuration/database-schema"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Data & State",
+            "pages": [
+              "reference/data-fetching",
+              "reference/cart-store",
+              "reference/types"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "reference/utils",
+              "reference/whatsapp-integration"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Customer-facing product catalog with category filtering",
+    "Product detail pages with related product suggestions",
+    "Persistent cart with per-item notes and quantity management",
+    "WhatsApp-based checkout with formatted order message generation",
+    "Admin dashboard for CRUD management of products and categories",
+    "Image upload to Supabase Storage from the admin panel",
+    "Supabase authentication for admin access with Row Level Security",
+    "Animated UI with Framer Motion and a warm artisanal aesthetic"
+  ],
+  "publicApiSurface": [
+    "getProducts(): Promise<Product[]>",
+    "getProductById(id: string): Promise<Product | undefined>",
+    "getProductsByCategory(categoryId: string): Promise<Product[]>",
+    "getCategories(): Promise<Category[]>",
+    "useCartStore() — Zustand store with addItem, removeItem, updateQuantity, updateNote, clearCart, openDrawer, closeDrawer, toggleDrawer",
+    "useToastStore() — Zustand store with addToast, removeToast",
+    "formatPrice(price: number): string",
+    "generateWhatsAppMessage(items, total, delivery?): string",
+    "supabase — Supabase client (anon key)",
+    "supabaseAdmin — Supabase service-role client"
+  ]
+}

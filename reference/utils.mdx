@@ -1,0 +1,169 @@
+---
+title: "Floralé Utility Functions: formatPrice & WhatsApp"
+sidebarTitle: Utilities
+description: "API reference for formatPrice and generateWhatsAppMessage — the two utility functions powering Floralé's price display and WhatsApp checkout flow."
+---
+
+The `lib/utils.ts` module exports two pure utility functions used throughout Floralé: one for consistent UYU price formatting and one for composing the structured WhatsApp order message that drives the checkout flow. Both are imported by the cart page, the cart drawer, and any component that needs to display or transmit order data.
+
+---
+
+## `formatPrice`
+
+Formats a raw numeric price into a Uruguayan Peso currency string using the browser-native `Intl.NumberFormat` API. The output uses the `es-UY` locale and the `UYU` currency code, with no decimal places — so `1850` becomes `$\u00a01.850` (note the non-breaking space and the period as thousands separator, both standard in Uruguayan formatting).
+
+### Signature
+
+```typescript
+function formatPrice(price: number): string
+```
+
+### Parameters
+
+<ParamField path="price" type="number" required>
+  The numeric price in Uruguayan Pesos (UYU) to format. Should be a non-negative integer or float; fractional centésimos are rounded away because `minimumFractionDigits` and `maximumFractionDigits` are both `0`.
+</ParamField>
+
+### Return value
+
+A locale-formatted currency string, e.g. `"$ 1.850"`. The exact representation (spacing, symbol placement) follows the `es-UY` locale rules provided by the runtime's ICU data.
+
+### Usage example
+
+```typescript
+import { formatPrice } from '@/lib/utils';
+
+formatPrice(1850);   // "$ 1.850"
+formatPrice(490);    // "$ 490"
+formatPrice(12000);  // "$ 12.000"
+```
+
+### Implementation notes
+
+The function delegates entirely to `Intl.NumberFormat` — no manual string manipulation is performed. This means the output is consistent with the user's runtime environment as long as `es-UY` ICU data is present (it is in all modern browsers and in Node.js 13+).
+
+---
+
+## `generateWhatsAppMessage`
+
+Composes the full plain-text WhatsApp message that is URI-encoded and appended to a `wa.me` deep-link during checkout. The message uses WhatsApp's native bold syntax (`*text*`) and box-drawing characters (`━━━`) as section dividers to produce a structured, readable order summary. When the optional `delivery` argument is provided, a delivery-details block is prepended before the product list.
+
+### Signature
+
+```typescript
+function generateWhatsAppMessage(
+  items: { product: Product; quantity: number; note?: string }[],
+  total: number,
+  delivery?: { sender: string; recipient: string; date: string; method: string }
+): string
+```
+
+### Parameters
+
+<ParamField path="items" type="{ product: Product; quantity: number; note?: string }[]" required>
+  An array of cart line items. Each element must contain a full `Product` object, the ordered quantity, and an optional free-text note attached to that item. If `note` is present it is appended beneath the line with a ✏️ prefix.
+
+  - `product` — a `Product` object with at least `name: string` and `price: number`.
+  - `quantity` — the number of units ordered (positive integer).
+  - `note?` — an optional customer note for that specific item, e.g. `"color azul"`.
+</ParamField>
+
+<ParamField path="total" type="number" required>
+  The pre-calculated order total in UYU. This value is formatted with `formatPrice` and rendered as the bold footer line of the message. It should equal the sum of `product.price × quantity` for all items, but the function does not recompute it — callers are responsible for passing the correct value.
+</ParamField>
+
+<ParamField path="delivery" type="{ sender: string; recipient: string; date: string; method: string }">
+  Optional delivery metadata. When provided, a *Datos del pedido* section is inserted between the header and the product list. All four fields are required if the object is passed.
+
+  - `sender` — the name of the person placing the order (*De*).
+  - `recipient` — the name of the person receiving the gift (*Para*).
+  - `date` — the requested delivery date as a formatted string, e.g. `"15/08/2025"`.
+  - `method` — the delivery method; either `"Envío"` (home delivery) or `"Retiro"` (store pickup).
+</ParamField>
+
+### Return value
+
+A multi-line plain-text `string` ready to be passed to `encodeURIComponent` and appended as the `text` query parameter of a `wa.me` URL.
+
+### Output format
+
+The generated message follows this structure:
+
+```text
+🌿 *Nuevo Pedido — Florale*
+
+━━━━━━━━━━━━━━━━
+*Datos del pedido:*
+━━━━━━━━━━━━━━━━
+
+*De:* Ana García
+*Para:* María López
+*Entrega:* 20/08/2025
+*Modalidad:* Envío
+
+━━━━━━━━━━━━━━━━
+*Detalle del pedido:*
+━━━━━━━━━━━━━━━━
+
+• Ramo de rosas × 1 — $ 1.850
+   ✏️ color rosado
+• Caja de chocolates × 2 — $ 980
+
+━━━━━━━━━━━━━━━━
+*Total: $ 3.810*
+━━━━━━━━━━━━━━━━
+```
+
+When `delivery` is omitted (quick checkout from the cart drawer), the *Datos del pedido* block is skipped and the message begins directly with the *Detalle del pedido* section.
+
+### Formatting conventions
+
+| Syntax | Meaning |
+|---|---|
+| `*text*` | **Bold** in WhatsApp |
+| `━━━━━━━━━━━━━━━━` | Section divider (U+2501 BOX DRAWINGS HEAVY HORIZONTAL) |
+| `• item × qty — price` | Product line format |
+| `   ✏️ note` | Per-item note, indented three spaces |
+
+### Full usage example
+
+```typescript
+import { generateWhatsAppMessage } from '@/lib/utils';
+import type { Product } from '@/types';
+
+const rosas: Product = {
+  id: 'rosas-001',
+  name: 'Ramo de rosas',
+  description: 'Ramo artesanal de 12 rosas',
+  price: 1850,
+  image: '/images/rosas.jpg',
+  categoryId: 'flores',
+};
+
+const chocolates: Product = {
+  id: 'choc-002',
+  name: 'Caja de chocolates',
+  description: 'Selección artesanal de chocolates',
+  price: 490,
+  image: '/images/chocolates.jpg',
+  categoryId: 'regalos',
+};
+
+const message = generateWhatsAppMessage(
+  [
+    { product: rosas,      quantity: 1, note: 'color rosado' },
+    { product: chocolates, quantity: 2 },
+  ],
+  2830,
+  {
+    sender:    'Ana García',
+    recipient: 'María López',
+    date:      '20/08/2025',
+    method:    'Envío',
+  }
+);
+
+const WHATSAPP_NUMBER = '59893705133';
+const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+window.open(url, '_blank');
+```

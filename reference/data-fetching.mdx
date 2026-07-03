@@ -1,0 +1,330 @@
+---
+title: "Data Fetching Functions — Floralé Product API"
+sidebarTitle: "Data Fetching"
+description: "Reference for getProducts, getProductById, getProductsByCategory, and getCategories — async helpers that query Supabase via the REST API."
+---
+
+Floralé's data-fetching layer lives in `lib/products.ts` and exposes four async functions for reading products and categories from Supabase. All calls go directly to the Supabase REST API using the native `fetch` with `cache: 'no-store'` — the Supabase JS client is intentionally not used here — making these functions safe to call from any Next.js Server Component or Route Handler without accidental caching.
+
+<Note>
+  Both `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` must be
+  present in your environment. If either variable is missing, every function
+  silently returns an empty array rather than throwing, so the UI degrades
+  gracefully during misconfigured builds.
+</Note>
+
+---
+
+## Environment variables
+
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | The base URL of your Supabase project (e.g. `https://xyz.supabase.co`) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The public anonymous key issued by Supabase |
+
+Both variables are forwarded by Next.js to the browser via the `NEXT_PUBLIC_` prefix, but the fetching functions run exclusively on the server — no credentials are ever exposed to the client bundle through this module.
+
+---
+
+## Internal: `mapProduct`
+
+Before any data reaches your components, rows returned from the `products` table are normalised by an internal `mapProduct` helper. The database uses snake_case column names; the TypeScript types use camelCase. The only structural change is:
+
+```
+category_id  (DB column)  →  categoryId  (TypeScript field)
+```
+
+All other fields (`id`, `name`, `description`, `price`, `image`) are copied as-is. Fields that may be `null` in the database (`description`, `image`) are coerced to empty strings.
+
+---
+
+## `getProducts`
+
+Returns every product in the catalogue, ordered by creation date (oldest first).
+
+```typescript
+export async function getProducts(): Promise<Product[]>
+```
+
+### Parameters
+
+_This function takes no parameters._
+
+### Return type
+
+<ResponseField name="Product[]" type="array">
+  An array of `Product` objects ordered by `created_at ASC`. Returns an empty
+  array if the environment variables are missing or if the request fails.
+
+  <ResponseField name="id" type="string">
+    Unique product identifier (UUID).
+  </ResponseField>
+  <ResponseField name="name" type="string">
+    Display name of the product.
+  </ResponseField>
+  <ResponseField name="description" type="string">
+    Long-form product description. Empty string when not set.
+  </ResponseField>
+  <ResponseField name="price" type="number">
+    Price in the store's base currency unit (e.g. cents or dollars).
+  </ResponseField>
+  <ResponseField name="image" type="string">
+    URL or path for the product's primary image. Empty string when not set.
+  </ResponseField>
+  <ResponseField name="categoryId" type="string">
+    ID of the category this product belongs to (mapped from `category_id`).
+  </ResponseField>
+</ResponseField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Server Component
+// app/shop/page.tsx
+import { getProducts } from '@/lib/products';
+
+export default async function ShopPage() {
+  const products = await getProducts();
+
+  return (
+    <ul>
+      {products.map((product) => (
+        <li key={product.id}>{product.name} — ${product.price}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+```typescript Route Handler
+// app/api/products/route.ts
+import { getProducts } from '@/lib/products';
+import { NextResponse } from 'next/server';
+
+export async function GET() {
+  const products = await getProducts();
+  return NextResponse.json(products);
+}
+```
+
+</CodeGroup>
+
+---
+
+## `getProductById`
+
+Fetches a single product by its UUID. Returns `undefined` when no matching record is found.
+
+```typescript
+export async function getProductById(id: string): Promise<Product | undefined>
+```
+
+### Parameters
+
+<ParamField path="id" type="string" required>
+  The UUID of the product to retrieve. The value is URL-encoded before being
+  appended to the REST filter query.
+</ParamField>
+
+### Return type
+
+<ResponseField name="Product | undefined" type="object | undefined">
+  A single `Product` object when found, or `undefined` when no product matches
+  the given `id` or when the request fails.
+
+  <ResponseField name="id" type="string">Unique product identifier (UUID).</ResponseField>
+  <ResponseField name="name" type="string">Display name of the product.</ResponseField>
+  <ResponseField name="description" type="string">Long-form description. Empty string when not set.</ResponseField>
+  <ResponseField name="price" type="number">Price in the store's base currency unit.</ResponseField>
+  <ResponseField name="image" type="string">URL or path for the primary image. Empty string when not set.</ResponseField>
+  <ResponseField name="categoryId" type="string">Owning category ID (mapped from `category_id`).</ResponseField>
+</ResponseField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Dynamic Route
+// app/shop/[id]/page.tsx
+import { getProductById } from '@/lib/products';
+import { notFound } from 'next/navigation';
+
+interface Props {
+  params: { id: string };
+}
+
+export default async function ProductPage({ params }: Props) {
+  const product = await getProductById(params.id);
+
+  if (!product) {
+    notFound();
+  }
+
+  return (
+    <article>
+      <h1>{product.name}</h1>
+      <p>{product.description}</p>
+      <strong>${product.price}</strong>
+    </article>
+  );
+}
+```
+
+</CodeGroup>
+
+---
+
+## `getProductsByCategory`
+
+Returns all products that belong to a specific category, ordered by creation date (oldest first). This is the preferred way to power category landing pages.
+
+```typescript
+export async function getProductsByCategory(categoryId: string): Promise<Product[]>
+```
+
+### Parameters
+
+<ParamField path="categoryId" type="string" required>
+  The ID of the category to filter by. Mapped to the `category_id` column in
+  the database via the `eq.` PostgREST filter. The value is URL-encoded.
+</ParamField>
+
+### Return type
+
+<ResponseField name="Product[]" type="array">
+  An array of `Product` objects filtered to the given category, ordered by
+  `created_at ASC`. Returns an empty array if no products exist in the
+  category, if the environment variables are missing, or if the request fails.
+</ResponseField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Category Page
+// app/categories/[categoryId]/page.tsx
+import { getProductsByCategory } from '@/lib/products';
+
+interface Props {
+  params: { categoryId: string };
+}
+
+export default async function CategoryPage({ params }: Props) {
+  const products = await getProductsByCategory(params.categoryId);
+
+  if (products.length === 0) {
+    return <p>No products in this category yet.</p>;
+  }
+
+  return (
+    <ul>
+      {products.map((product) => (
+        <li key={product.id}>{product.name}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+</CodeGroup>
+
+---
+
+## `getCategories`
+
+Fetches every category available in the store, ordered by `id ASC`.
+
+```typescript
+export async function getCategories(): Promise<Category[]>
+```
+
+### Parameters
+
+_This function takes no parameters._
+
+### Return type
+
+<ResponseField name="Category[]" type="array">
+  An array of `Category` objects ordered by `id ASC`. Returns an empty array
+  if the environment variables are missing or if the request fails.
+
+  <ResponseField name="id" type="string">
+    Unique category identifier.
+  </ResponseField>
+  <ResponseField name="name" type="string">
+    Human-readable category name (e.g. "Dried Florals").
+  </ResponseField>
+  <ResponseField name="description" type="string">
+    A short description of the category's contents.
+  </ResponseField>
+</ResponseField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Navigation Component
+// components/CategoryNav.tsx
+import { getCategories } from '@/lib/products';
+import Link from 'next/link';
+
+export default async function CategoryNav() {
+  const categories = await getCategories();
+
+  return (
+    <nav>
+      {categories.map((cat) => (
+        <Link key={cat.id} href={`/categories/${cat.id}`}>
+          {cat.name}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+```
+
+```typescript Combining with getProductsByCategory
+// app/shop/page.tsx — prefetch categories + first category's products
+import { getCategories, getProductsByCategory } from '@/lib/products';
+
+export default async function ShopPage() {
+  const categories = await getCategories();
+  const featured = categories[0]
+    ? await getProductsByCategory(categories[0].id)
+    : [];
+
+  return (
+    <section>
+      <h2>{categories[0]?.name}</h2>
+      <ul>
+        {featured.map((p) => (
+          <li key={p.id}>{p.name}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+```
+
+</CodeGroup>
+
+---
+
+## Error handling and graceful degradation
+
+All four functions share the same internal `fetchFromSupabase` helper, which applies a consistent error-handling strategy:
+
+| Condition | Behaviour |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_ANON_KEY` not set | Returns `[]` immediately |
+| Non-`ok` HTTP response from Supabase | Returns `[]` |
+| Network error or thrown exception | Returns `[]` (caught internally) |
+| Empty result set | Returns `[]` normally |
+
+<Tip>
+  Because these functions never throw, you can call them at the top level of a
+  Server Component without wrapping them in `try/catch`. Guard against empty
+  arrays in your UI instead — for example by rendering a fallback message when
+  `products.length === 0`.
+</Tip>

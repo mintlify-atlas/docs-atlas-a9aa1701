@@ -1,0 +1,195 @@
+---
+title: "WhatsApp Checkout Integration — Floralé Gift Shop"
+sidebarTitle: WhatsApp Integration
+description: "How Floralé's end-to-end WhatsApp checkout works: two entry points, wa.me URL format, order message structure, and deployment configuration."
+---
+
+Floralé uses WhatsApp as its entire checkout channel — there is no payment gateway, no server-side order database, and no email confirmation. When a customer is ready to buy, the app composes a formatted order message and opens WhatsApp via a `wa.me` deep-link so the shop owner receives a structured summary directly in their chat. This page documents how that flow works, where the relevant code lives, and what you need to change when deploying the shop for a different business.
+
+---
+
+## How the flow works
+
+1. The customer adds products to their cart (managed by `useCartStore`).
+2. They navigate to `/carrito` or open the cart drawer from any page.
+3. They fill in any required details and click **Enviar pedido por WhatsApp**.
+4. `generateWhatsAppMessage` composes a plain-text message from the cart contents.
+5. The app opens `https://wa.me/{number}?text={encodedMessage}` in a new tab.
+6. WhatsApp pre-fills the message in a new chat with the shop number — the customer just taps **Send**.
+7. The shop owner receives the order, confirms availability, and requests a 50 % deposit to hold the items.
+
+<Note>
+  Floralé intentionally skips a traditional payment gateway. Orders are confirmed manually by the shop owner over WhatsApp, who then requests a 50 % deposit via bank transfer or cash before preparing the arrangement. This keeps the setup simple and personal — a deliberate choice for an artisanal gift shop.
+</Note>
+
+---
+
+## Entry point 1 — Cart page (`/carrito`)
+
+The cart page at `app/(app)/carrito/page.tsx` is the **full checkout experience**. Before the customer can send their order, they must complete four delivery-detail fields:
+
+| Field | Label | Description |
+|---|---|---|
+| `sender` | *De (tu nombre)* | Name of the person placing the order |
+| `recipient` | *Para (quien recibe)* | Name of the gift recipient |
+| `deliveryDate` | Date picker | Requested delivery date |
+| `deliveryMethod` | Toggle | `"Envío"` (home delivery) or `"Retiro"` (store pickup) |
+
+If any field is empty when the customer clicks the checkout button, `addToast('Completa todos los datos del pedido')` fires and the WhatsApp redirect is blocked.
+
+### Checkout handler
+
+```typescript
+const WHATSAPP_NUMBER = '59893705133'; // Uruguay +598
+
+const handleCheckout = () => {
+  if (!sender || !recipient || !deliveryDate || !deliveryMethod) {
+    addToast('Completa todos los datos del pedido');
+    return;
+  }
+
+  const message = generateWhatsAppMessage(cartProducts, total, {
+    sender,
+    recipient,
+    date: deliveryDate,
+    method: deliveryMethod,
+  });
+
+  const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+  window.open(url, '_blank');
+};
+```
+
+Because the `delivery` argument is provided, `generateWhatsAppMessage` includes the full *Datos del pedido* block in the message (see [Message format](#message-format) below).
+
+---
+
+## Entry point 2 — Cart drawer (`WhatsAppButton`)
+
+The `WhatsAppButton` component (in `components/whatsapp-button.tsx`) is used inside the cart drawer — the slide-in panel accessible from the navigation bar. This is a **quick checkout** path: no delivery fields, just the item list and total.
+
+```typescript
+const WHATSAPP_NUMBER = '573001234567'; // ← placeholder; update before deploying
+
+export function WhatsAppButton() {
+  // ... resolves cartProducts and total from useCartStore
+
+  const handleCheckout = () => {
+    const message = generateWhatsAppMessage(cartProducts, total);
+    // delivery is omitted — no Datos del pedido block
+    const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+    closeDrawer();
+    window.open(url, '_blank');
+  };
+
+  return (
+    <button onClick={handleCheckout} disabled={items.length === 0}>
+      <MessageCircle />
+      Enviar pedido por WhatsApp — {formatPrice(total)}
+    </button>
+  );
+}
+```
+
+The button is disabled when the cart is empty (`items.length === 0`). Unlike the cart page, this path skips delivery details entirely — the shop owner follows up over chat to confirm specifics.
+
+<Tip>
+  `WHATSAPP_NUMBER` is defined separately in two files: `carrito/page.tsx` (the main checkout) and `components/whatsapp-button.tsx` (the drawer button). When deploying Floralé for a different shop, update **both** constants. The number must be in full international format without `+`, spaces, or dashes — e.g. `59893705133` for Uruguay (+598 93 705 133).
+</Tip>
+
+---
+
+## `wa.me` URL format
+
+WhatsApp's click-to-chat service accepts a pre-filled message via a simple URL scheme:
+
+```text
+https://wa.me/{number}?text={encodeURIComponent(message)}
+```
+
+| Part | Example | Notes |
+|---|---|---|
+| `{number}` | `59893705133` | Full international number, no `+` or spaces |
+| `{message}` | Raw multi-line string | Must be passed through `encodeURIComponent` |
+
+The URL is opened with `window.open(url, '_blank')`, which launches WhatsApp Web in a new browser tab on desktop or the WhatsApp app on mobile.
+
+---
+
+## Message format
+
+`generateWhatsAppMessage` from `lib/utils.ts` produces a structured plain-text message. WhatsApp renders `*text*` as **bold** and the `━━━` box-drawing characters as visual dividers.
+
+### Full message — with delivery details
+
+This is what the shop owner receives when the customer checks out via `/carrito`:
+
+```text
+🌿 *Nuevo Pedido — Florale*
+
+━━━━━━━━━━━━━━━━
+*Datos del pedido:*
+━━━━━━━━━━━━━━━━
+
+*De:* Ana García
+*Para:* María López
+*Entrega:* 20/08/2025
+*Modalidad:* Envío
+
+━━━━━━━━━━━━━━━━
+*Detalle del pedido:*
+━━━━━━━━━━━━━━━━
+
+• Ramo de rosas × 1 — $ 1.850
+   ✏️ color rosado
+• Caja de chocolates × 2 — $ 980
+
+━━━━━━━━━━━━━━━━
+*Total: $ 2.830*
+━━━━━━━━━━━━━━━━
+```
+
+### Quick message — without delivery details
+
+This is what the shop owner receives when the customer sends from the cart drawer:
+
+```text
+🌿 *Nuevo Pedido — Florale*
+
+━━━━━━━━━━━━━━━━
+*Detalle del pedido:*
+━━━━━━━━━━━━━━━━
+
+• Ramo de rosas × 1 — $ 1.850
+• Caja de chocolates × 2 — $ 980
+
+━━━━━━━━━━━━━━━━
+*Total: $ 2.830*
+━━━━━━━━━━━━━━━━
+```
+
+---
+
+## Per-item notes
+
+Every cart item can carry an optional free-text note, editable inline on the cart page. Notes appear beneath the relevant product line in the WhatsApp message, indented and prefixed with ✏️:
+
+```text
+• Ramo de rosas × 1 — $ 1.850
+   ✏️ color rosado, sin espinas
+```
+
+Notes are stored in `useCartStore` via `updateNote(productId, value)` and mapped onto the `note` field of each item before being passed to `generateWhatsAppMessage`. The cart drawer's `WhatsAppButton` does not pass notes (items are resolved without the `note` field), so notes only appear in messages sent from the full cart page.
+
+---
+
+## Delivery method options
+
+The delivery method toggle on the cart page offers exactly two values:
+
+| Value | Meaning |
+|---|---|
+| `"Envío"` | Home delivery — the shop ships or delivers to the recipient's address |
+| `"Retiro"` | Store pickup — the customer collects the order from the shop |
+
+The selected value is passed as `delivery.method` and appears as `*Modalidad:*` in the message. No further routing logic depends on this value in the frontend — it is purely informational for the shop owner.

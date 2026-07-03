@@ -1,0 +1,294 @@
+---
+title: "TypeScript Types & Interfaces — Floralé Data Shapes"
+sidebarTitle: "Types"
+description: "Reference for Product, Category, and CartItem in Floralé — field definitions, the DB snake_case mapping, and the CartItem difference between types and store."
+---
+
+Floralé's shared TypeScript types live in `types/index.ts` and form the contract between the Supabase database, the data-fetching layer, and the UI components. Understanding these shapes — especially the `categoryId` ↔ `category_id` mapping and the two variants of `CartItem` — will save you time when adding new features or debugging type errors.
+
+---
+
+## `Product`
+
+Represents a single item available for purchase in the shop. This interface is returned by `getProducts`, `getProductById`, and `getProductsByCategory`.
+
+```typescript
+export interface Product {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  image: string;
+  categoryId: string;
+}
+```
+
+### Fields
+
+<ResponseField name="id" type="string" required>
+  UUID that uniquely identifies the product. Sourced directly from the `id`
+  column in the `products` table.
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  The human-readable product name shown in listings and on the product detail
+  page (e.g. `"Dried Pampas Bouquet"`).
+</ResponseField>
+
+<ResponseField name="description" type="string" required>
+  A long-form description of the product. The `mapProduct` helper coerces
+  database `null` to an empty string, so this field is always a `string` in
+  TypeScript even if the DB row has no description.
+</ResponseField>
+
+<ResponseField name="price" type="number" required>
+  The product price as stored in the database. Treat this as your store's base
+  currency unit (e.g. dollars). Format it for display using `toLocaleString`
+  or a currency formatter — Floralé does not store a currency symbol.
+</ResponseField>
+
+<ResponseField name="image" type="string" required>
+  The URL or path of the product's primary image. Coerced from `null` to an
+  empty string by `mapProduct`, so check for emptiness before rendering an
+  `<img>` tag (e.g. `image || '/placeholder.png'`).
+</ResponseField>
+
+<ResponseField name="categoryId" type="string" required>
+  The ID of the category this product belongs to. **This field is mapped from
+  the `category_id` column in the database** — see the [snake_case mapping
+  note](#snake_case--camelcase-mapping) below.
+</ResponseField>
+
+### Usage in practice
+
+<CodeGroup>
+
+```typescript ProductCard component
+import type { Product } from '@/types';
+
+interface ProductCardProps {
+  product: Product;
+}
+
+export function ProductCard({ product }: ProductCardProps) {
+  return (
+    <article>
+      <img
+        src={product.image || '/placeholder.png'}
+        alt={product.name}
+      />
+      <h2>{product.name}</h2>
+      <p>{product.description}</p>
+      <strong>
+        {product.price.toLocaleString('en-US', {
+          style: 'currency',
+          currency: 'USD',
+        })}
+      </strong>
+    </article>
+  );
+}
+```
+
+```typescript Filtering by category
+import type { Product } from '@/types';
+
+function filterByCategory(products: Product[], categoryId: string): Product[] {
+  return products.filter((p) => p.categoryId === categoryId);
+}
+```
+
+</CodeGroup>
+
+---
+
+## `Category`
+
+Represents a top-level organisational grouping for products (e.g. "Dried Florals", "Candles", "Gift Sets"). Returned by `getCategories`.
+
+```typescript
+export interface Category {
+  id: string;
+  name: string;
+  description: string;
+}
+```
+
+### Fields
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the category. Used as the `category_id` foreign key in
+  the `products` table and as the value of `Product.categoryId`.
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  The human-readable category label shown in navigation menus and headings
+  (e.g. `"Dried Florals"`).
+</ResponseField>
+
+<ResponseField name="description" type="string" required>
+  A short description of what kinds of products belong in the category. Useful
+  for category landing-page hero text.
+</ResponseField>
+
+### Usage in practice
+
+<CodeGroup>
+
+```typescript Category navigation
+import type { Category } from '@/types';
+import Link from 'next/link';
+
+interface CategoryNavProps {
+  categories: Category[];
+}
+
+export function CategoryNav({ categories }: CategoryNavProps) {
+  return (
+    <nav aria-label="Product categories">
+      {categories.map((cat) => (
+        <Link key={cat.id} href={`/categories/${cat.id}`}>
+          {cat.name}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+```
+
+```typescript Admin panel category list
+import type { Category } from '@/types';
+
+interface AdminCategoryTableProps {
+  categories: Category[];
+}
+
+export function AdminCategoryTable({ categories }: AdminCategoryTableProps) {
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Name</th><th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {categories.map((cat) => (
+          <tr key={cat.id}>
+            <td>{cat.id}</td>
+            <td>{cat.name}</td>
+            <td>{cat.description}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+```
+
+</CodeGroup>
+
+---
+
+## `CartItem`
+
+A minimal representation of one line in the shopping cart as defined in `types/index.ts`.
+
+```typescript
+export interface CartItem {
+  productId: string;
+  quantity: number;
+}
+```
+
+### Fields
+
+<ResponseField name="productId" type="string" required>
+  The UUID of the product this line item refers to. Use this to look up the
+  full `Product` object when you need to display the name, image, or price.
+</ResponseField>
+
+<ResponseField name="quantity" type="number" required>
+  How many units of the product the customer wants. Always a positive integer
+  in a valid cart state.
+</ResponseField>
+
+### The `note` field difference
+
+<Note>
+  The `CartItem` exported from `types/index.ts` has **no `note` field**. The
+  internal `CartItem` interface inside `lib/cart-store.ts` **extends this
+  shape** with an additional `note: string` for personalisation messages.
+  The store exports its own version — import from `@/lib/cart-store` when you
+  need access to `note`, and from `@/types` when you only need `productId` and
+  `quantity`.
+</Note>
+
+A comparison of the two interfaces:
+
+| Field | `types/index.ts` | `lib/cart-store.ts` |
+|---|---|---|
+| `productId` | ✅ `string` | ✅ `string` |
+| `quantity` | ✅ `number` | ✅ `number` |
+| `note` | ❌ not present | ✅ `string` (defaults to `""`) |
+
+### Usage in practice
+
+<CodeGroup>
+
+```typescript Order submission (types/index.ts CartItem)
+import type { CartItem } from '@/types';
+
+interface OrderPayload {
+  items: CartItem[];
+  customerEmail: string;
+}
+
+async function submitOrder(payload: OrderPayload) {
+  await fetch('/api/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+```
+
+```typescript Cart line with note (cart-store CartItem)
+import type { CartItem } from '@/lib/cart-store';
+
+interface CartLineProps {
+  item: CartItem; // includes note
+  productName: string;
+}
+
+export function CartLine({ item, productName }: CartLineProps) {
+  return (
+    <li>
+      {productName} × {item.quantity}
+      {item.note && <small> — "{item.note}"</small>}
+    </li>
+  );
+}
+```
+
+</CodeGroup>
+
+---
+
+## snake_case ↔ camelCase mapping
+
+The Supabase `products` table uses PostgreSQL naming conventions (snake_case). The TypeScript layer converts column names to camelCase via the internal `mapProduct` function in `lib/products.ts`. Only one field is affected:
+
+| Database column (`snake_case`) | TypeScript field (`camelCase`) |
+|---|---|
+| `category_id` | `categoryId` |
+
+All other columns (`id`, `name`, `description`, `price`, `image`) share the same name in both the database and TypeScript.
+
+This means when you write PostgREST filter queries manually you must use `category_id`, but once the data has been fetched and mapped, your TypeScript code always refers to `categoryId`.
+
+<Tip>
+  The `Category` interface is not transformed by `mapProduct` — its fields
+  (`id`, `name`, `description`) happen to match the database column names
+  exactly, so no renaming is needed. Only `Product` requires the
+  `category_id` → `categoryId` remap.
+</Tip>

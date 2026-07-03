@@ -1,0 +1,227 @@
+---
+title: "Database Schema Reference — Floralé Tables & Policies"
+sidebarTitle: "Database Schema"
+description: "Full reference for Floralé's PostgreSQL schema: tables, columns, indexes, Row Level Security policies, and the product-images storage bucket."
+---
+
+Floralé's database lives in Supabase (PostgreSQL) and consists of two core tables — `categories` and `products` — plus a public storage bucket for product images. Row Level Security is enabled on every table, allowing anonymous visitors to read data while restricting all write operations to authenticated admin users. This page documents every column, constraint, index, and policy defined in `supabase-schema.sql`.
+
+## Tables
+
+### `categories`
+
+Stores the top-level product categories displayed in the Floralé storefront. Each category has a human-readable slug used as its primary key so that URLs remain stable and meaningful.
+
+<ResponseField name="id" type="TEXT" required>
+  Primary key. A short, URL-safe slug that uniquely identifies the category (e.g. `cajas`, `desayunos`). Chosen manually at insert time rather than auto-generated so that it can be referenced directly in URLs and foreign keys without an extra lookup.
+</ResponseField>
+
+<ResponseField name="name" type="TEXT" required>
+  Display name shown to customers in the storefront (e.g. `Cajas de Regalo`, `Desayunos`). Must not be null.
+</ResponseField>
+
+<ResponseField name="description" type="TEXT">
+  A short prose description of the category. Defaults to an empty string if omitted.
+</ResponseField>
+
+---
+
+### `products`
+
+The central table for all gift items sold in the store. Each product belongs to exactly one category and carries its own pricing, imagery, and timestamps.
+
+<ResponseField name="id" type="TEXT" required>
+  Primary key. A human-readable slug (e.g. `corazon_red_oso`, `desayuno_premium`) that doubles as a stable URL identifier for each product.
+</ResponseField>
+
+<ResponseField name="name" type="TEXT" required>
+  Full product name displayed in listings and detail pages (e.g. `Box de Corazón con Peluche Oso`).
+</ResponseField>
+
+<ResponseField name="description" type="TEXT">
+  Long-form product description shown on the detail page. Defaults to an empty string if not provided.
+</ResponseField>
+
+<ResponseField name="price" type="INTEGER" required>
+  Price in **Uruguayan pesos (UYU)**, stored as a whole integer (no decimal). For example, a value of `1850` represents $1,850 UYU. The frontend is responsible for formatting this value with the appropriate locale and currency symbol.
+</ResponseField>
+
+<ResponseField name="image" type="TEXT">
+  URL or relative path of the product's primary image. Can be a Supabase Storage URL (e.g. `https://<project>.supabase.co/storage/v1/object/public/product-images/corazon_red_oso.jpg`) or a local public path (e.g. `/products/corazon_red_oso.jpg`). Defaults to an empty string if omitted. Next.js `<Image>` is configured to allow remote patterns from `*.supabase.co`.
+</ResponseField>
+
+<ResponseField name="category_id" type="TEXT" required>
+  Foreign key referencing `categories(id)`. Every product must belong to a category. Deleting a category that still has products will fail with a foreign-key constraint violation.
+</ResponseField>
+
+<ResponseField name="created_at" type="TIMESTAMPTZ" required>
+  Timestamp with time zone recording when the row was first inserted. Defaults to `NOW()` so it is set automatically at insert time.
+</ResponseField>
+
+<ResponseField name="updated_at" type="TIMESTAMPTZ" required>
+  Timestamp with time zone recording the last modification. Defaults to `NOW()`. Update this column manually (or via a trigger) whenever a product record changes to keep it accurate.
+</ResponseField>
+
+---
+
+## Index
+
+<ResponseField name="idx_products_category" type="B-tree index">
+  A standard B-tree index on `products(category_id)`. Speeds up the common query pattern of fetching all products that belong to a given category — used on every category page in the storefront. Created with `IF NOT EXISTS` so the migration is safe to re-run.
+</ResponseField>
+
+---
+
+## Row Level Security
+
+RLS is enabled on both `categories` and `products`. The policies implement a simple public-read / authenticated-write pattern that suits a single-admin storefront.
+
+### Read policies (public)
+
+Any visitor — authenticated or not — may `SELECT` from both tables. This is what powers the storefront's product listings without requiring a login.
+
+| Table | Policy name | Operation | Condition |
+|---|---|---|---|
+| `products` | Public can read products | `SELECT` | `true` (always) |
+| `categories` | Public can read categories | `SELECT` | `true` (always) |
+
+### Write policies (authenticated only)
+
+Insert, update, and delete operations are restricted to users whose JWT carries the `authenticated` role — i.e. users who have signed in via Supabase Auth. This protects the admin panel data from unauthenticated writes.
+
+| Table | Policy name | Operation | Condition |
+|---|---|---|---|
+| `products` | Authenticated can insert products | `INSERT` | `auth.role() = 'authenticated'` |
+| `products` | Authenticated can update products | `UPDATE` | `auth.role() = 'authenticated'` |
+| `products` | Authenticated can delete products | `DELETE` | `auth.role() = 'authenticated'` |
+| `categories` | Authenticated can insert categories | `INSERT` | `auth.role() = 'authenticated'` |
+| `categories` | Authenticated can update categories | `UPDATE` | `auth.role() = 'authenticated'` |
+| `categories` | Authenticated can delete categories | `DELETE` | `auth.role() = 'authenticated'` |
+
+<Note>
+  Server-side code that uses `supabaseAdmin` (the service role client from `lib/supabase-service.ts`) bypasses RLS entirely, regardless of these policies. That client should only be used for trusted admin operations in server-side contexts — never in browser code.
+</Note>
+
+---
+
+## Supabase Storage
+
+### `product-images` bucket
+
+A single public Supabase Storage bucket holds all product images. It is created by the schema migration with `public = true`, which means Supabase generates publicly accessible URLs for every object — no signed URL required for reads.
+
+| Setting | Value |
+|---|---|
+| Bucket ID | `product-images` |
+| Public | `true` |
+| Allowed origins | Any (governed by RLS policies below) |
+
+### Storage policies
+
+| Policy name | Operation | Condition |
+|---|---|---|
+| Public can read product images | `SELECT` | `bucket_id = 'product-images'` |
+| Authenticated can upload product images | `INSERT` | `bucket_id = 'product-images'` AND `auth.role() = 'authenticated'` |
+| Authenticated can update product images | `UPDATE` | `bucket_id = 'product-images'` AND `auth.role() = 'authenticated'` |
+| Authenticated can delete product images | `DELETE` | `bucket_id = 'product-images'` AND `auth.role() = 'authenticated'` |
+
+Next.js is configured in `next.config.ts` to allow images from `*.supabase.co` so that Supabase Storage URLs work seamlessly with the `<Image>` component:
+
+```typescript
+// next.config.ts
+const nextConfig: NextConfig = {
+  images: {
+    remotePatterns: [
+      { protocol: 'https', hostname: 'images.unsplash.com' },
+      { protocol: 'https', hostname: '*.supabase.co' },
+    ],
+  },
+}
+```
+
+---
+
+## Full SQL migration
+
+Run this script in the **SQL Editor** of your Supabase dashboard to create all tables, indexes, RLS policies, seed data, and the storage bucket in one pass. See [Supabase Setup](/configuration/supabase-setup) for step-by-step instructions.
+
+```sql
+-- Ejecutar en SQL Editor de Supabase Dashboard
+
+-- 1. Crear tabla de categorías
+CREATE TABLE IF NOT EXISTS categories (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT ''
+);
+
+-- 2. Crear tabla de productos
+CREATE TABLE IF NOT EXISTS products (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  price INTEGER NOT NULL,
+  image TEXT NOT NULL DEFAULT '',
+  category_id TEXT NOT NULL REFERENCES categories(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3. Índice para búsquedas por categoría
+CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
+
+-- 4. Insertar categorías
+INSERT INTO categories (id, name, description) VALUES
+  ('cajas', 'Cajas de Regalo', 'Cajas de regalo con un diseño elegante y una variedad de productos'),
+  ('desayunos', 'Desayunos', 'Desayunos deliciosos y saludables preparados con ingredientes frescos y orgánicos')
+ON CONFLICT (id) DO NOTHING;
+
+-- 5. Insertar productos
+INSERT INTO products (id, name, description, price, image, category_id) VALUES
+  ('corazon_red_oso', 'Box de Corazón con Peluche Oso', 'Elegante box en forma de corazón de cartón corrugado. Incluye un peluche de oso (colores según stock), 6 flores de cinta de raso (colores a elección), 6 bombones Ferrero Rocher, cinta de envoltura, lazo decorativo y una mariposa dorada. Se entrega con tarjeta de regalo.', 1850, '/products/corazon_red_oso.jpg', 'cajas'),
+  ('corazon_red', 'Box Corazón Grande Red', 'Box grande en forma de corazón de cartón corrugado. Incluye 8 flores de cinta de raso (colores a elección), 12 bombones Ferrero Rocher, cinta de envoltura, lazo decorativo y una mariposa dorada. Se entrega con tarjeta de regalo.', 1750, '/products/corazon_red.jpg', 'cajas'),
+  ('girasol_bombones', 'Box Girasol con Bombones', 'Caja decorada con motivo de girasol. Incluye 4 flores de cinta de raso (colores a elección), 6 bombones Ferrero Rocher, tarjeta de regalo, cinta de envoltura y detalles decorativos.', 1350, '/products/girasol_bombones.jpg', 'cajas'),
+  ('caja_mixta', 'Caja Mixta', 'Caja mediana cuadrada con 3 flores de cinta de raso, 5 bombones Ferrero Rocher, un peluche pequeño (sujeto a stock), tarjeta y cinta de envoltura.', 1650, '/products/caja_mixta.jpg', 'cajas'),
+  ('box_carta', 'Box Carta', 'Caja tipo carta con diseño romántico. Incluye 4 flores de cinta de raso (colores a elección), 4 bombones Ferrero Rocher, tarjeta de regalo, lazo decorativo y cinta de envoltura.', 1000, '/products/box_carta.jpg', 'cajas'),
+  ('canasta_bombones', 'Canasta de Bombones', 'Canasta decorativa con 12 bombones Ferrero Rocher, 2 flores de cinta de raso, tarjeta de regalo y lazo decorativo.', 1450, '/products/canasta_bombones.jpg', 'cajas'),
+  ('desayuno_clasico', 'Desayuno Clásico', 'Desayuno tradicional que incluye: café, jugo de naranja natural, medialunas, facturas variadas y fruta de estación. Presentado en bandeja decorativa.', 1200, '/products/desayuno_clasico.jpg', 'desayunos'),
+  ('desayuno_premium', 'Desayuno Premium', 'Desayuno completo con café especial, jugo exprimido, medialunas artesanales, facturas rellenas, fruta fresca, yogur natural con granola y mini torta. Incluye tarjeta de regalo.', 1800, '/products/desayuno_premium.jpg', 'desayunos'),
+  ('desayuno_saludable', 'Desayuno Saludable', 'Desayuno fitness con bowl de açaí, granola casera, frutas frescas, yogur griego, jugo verde detox, té de hierbas y pan integral con palta.', 1400, '/products/desayuno_saludable.jpg', 'desayunos'),
+  ('desayuno_romantico', 'Desayuno Romántico', 'Desayuno para dos con café, jugo de naranja, medialunas en forma de corazón, facturas, frutillas con chocolate, queso y dulce, y una rosa natural. Incluye tarjeta de regalo personalizada.', 2200, '/products/desayuno_romantico.jpg', 'desayunos')
+ON CONFLICT (id) DO NOTHING;
+
+-- 6. Configurar Row Level Security
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+
+-- 7. Políticas: cualquiera puede leer
+CREATE POLICY "Public can read products" ON products FOR SELECT USING (true);
+CREATE POLICY "Public can read categories" ON categories FOR SELECT USING (true);
+
+-- 8. Políticas: solo usuarios autenticados pueden escribir (admin)
+CREATE POLICY "Authenticated can insert products" ON products FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Authenticated can update products" ON products FOR UPDATE USING (auth.role() = 'authenticated');
+CREATE POLICY "Authenticated can delete products" ON products FOR DELETE USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated can insert categories" ON categories FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Authenticated can update categories" ON categories FOR UPDATE USING (auth.role() = 'authenticated');
+CREATE POLICY "Authenticated can delete categories" ON categories FOR DELETE USING (auth.role() = 'authenticated');
+
+-- 9. Crear bucket de Storage para imágenes de productos
+INSERT INTO storage.buckets (id, name, public) VALUES ('product-images', 'product-images', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- 10. Políticas para el bucket: cualquiera puede leer imágenes
+CREATE POLICY "Public can read product images"
+ON storage.objects FOR SELECT USING (bucket_id = 'product-images');
+
+-- 11. Solo autenticados pueden subir/actualizar/eliminar imágenes
+CREATE POLICY "Authenticated can upload product images"
+ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'product-images' AND auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated can update product images"
+ON storage.objects FOR UPDATE USING (bucket_id = 'product-images' AND auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated can delete product images"
+ON storage.objects FOR DELETE USING (bucket_id = 'product-images' AND auth.role() = 'authenticated');
+```

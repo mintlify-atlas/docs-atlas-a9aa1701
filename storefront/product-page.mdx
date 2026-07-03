@@ -1,0 +1,198 @@
+---
+title: "Floralé Product Detail Page: SEO, Data & Related Items"
+sidebarTitle: "Product Page"
+description: "How the /producto/[id] page fetches product data, generates Open Graph metadata, renders related products, and handles missing items with notFound()."
+---
+
+The product detail page at `/producto/[id]` is a dynamic Next.js server component that renders a full-page view of a single artisanal product. It resolves the product ID from the URL, fetches the product alongside all other products and categories in parallel, computes a related-products list from the same category, and delegates rendering to the `ProductDetailClient` component. If no product matches the requested ID, the page calls `notFound()` to show Next.js's built-in 404 screen.
+
+## Route structure
+
+The file lives at `app/(app)/producto/[id]/page.tsx`. The `[id]` segment is a UUID that maps directly to the `id` column in the Supabase `products` table. Because the `params` object is a `Promise` in Next.js 15's async params API, the page awaits it before using the value.
+
+```tsx
+// app/(app)/producto/[id]/page.tsx
+export default async function ProductPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+
+  const [product, allProducts, allCategories] = await Promise.all([
+    getProductById(id),
+    getProducts(),
+    getCategories(),
+  ]);
+
+  if (!product) notFound();
+
+  const relatedProducts = allProducts.filter(
+    (p) => p.categoryId === product.categoryId && p.id !== product.id
+  );
+  const category = allCategories.find((c) => c.id === product.categoryId);
+
+  return (
+    <ProductDetailClient
+      product={product}
+      relatedProducts={relatedProducts}
+      category={category ?? null}
+    />
+  );
+}
+```
+
+## Parallel data fetching
+
+Three Supabase requests fire concurrently so none of them blocks the others:
+
+| Call | Purpose |
+|---|---|
+| `getProductById(id)` | Primary product data for the detail view |
+| `getProducts()` | Full product list used to derive related products |
+| `getCategories()` | Category list used to find the current product's category label |
+
+<Tip>
+  `getProductById` is the only fetch that directly uses the URL parameter. The other two calls return stable, ordered lists that are filtered client-side — no additional Supabase query is needed for related products.
+</Tip>
+
+## generateMetadata for SEO
+
+`generateMetadata` is an exported async function co-located with the page. Next.js calls it before rendering to inject `<title>`, `<meta description>`, and social-graph tags into the document `<head>`. It also awaits `params` and calls `getProductById`, which means the product is fetched twice per request — once for metadata and once for the page body. Next.js deduplicates identical `fetch` calls within a single render cycle, so in practice only one network request is made.
+
+```tsx
+import type { Metadata } from 'next';
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const product = await getProductById(id);
+
+  if (!product) {
+    return { title: 'Producto no encontrado — Florale' };
+  }
+
+  return {
+    title: `${product.name} — Florale`,
+    description: product.description || 'Producto artesanal único en Florale.',
+    openGraph: {
+      title: `${product.name} — Florale`,
+      description: product.description || 'Producto artesanal único en Florale.',
+      images: product.image
+        ? [{ url: product.image, width: 1200, height: 630 }]
+        : [],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${product.name} — Florale`,
+      description: product.description || 'Producto artesanal único en Florale.',
+      images: product.image ? [product.image] : [],
+    },
+  };
+}
+```
+
+### Metadata fields produced
+
+<CardGroup cols={2}>
+  <Card title="<title>" icon="heading">
+    `{product.name} — Florale`. Falls back to `"Producto no encontrado — Florale"` if the ID is invalid.
+  </Card>
+  <Card title="<meta description>" icon="align-left">
+    `product.description` if present; otherwise the default string `"Producto artesanal único en Florale."`.
+  </Card>
+  <Card title="Open Graph image" icon="share-nodes">
+    The product's Supabase Storage URL, declared at 1200 × 630 px. Omitted if `product.image` is empty.
+  </Card>
+  <Card title="Twitter card" icon="twitter">
+    `summary_large_image` card type, same title, description, and image as Open Graph.
+  </Card>
+</CardGroup>
+
+## Handling missing products
+
+When `getProductById` returns `undefined` (the product doesn't exist, or its ID is malformed), the page calls Next.js's `notFound()` helper, which immediately stops rendering and surfaces the nearest `not-found.tsx` boundary — or the framework's default 404 page if none is defined.
+
+```tsx
+if (!product) notFound();
+```
+
+`generateMetadata` also short-circuits gracefully: it returns only `{ title: 'Producto no encontrado — Florale' }` so search engines never index a broken metadata frame.
+
+<Warning>
+  `notFound()` throws internally — it does not return. Any code written after the `if (!product) notFound()` line is treated by TypeScript as unreachable, which is why `product` is narrowed to `Product` (non-undefined) for the rest of the component without an extra type assertion.
+</Warning>
+
+## Related products
+
+Related products are products that share the same `categoryId` as the current product but have a different `id`. The filtering is done in JavaScript after `getProducts()` returns, so no extra database query is needed.
+
+```typescript
+const relatedProducts = allProducts.filter(
+  (p) => p.categoryId === product.categoryId && p.id !== product.id
+);
+```
+
+`ProductDetailClient` receives this array and renders up to **six** items in a 2-column (mobile) / 3-column (desktop) grid beneath the main product detail — labeled *"También te puede gustar"* ("You might also like"). Each related card is a plain `<Link>` to `/producto/{rp.id}` with the same square image crop used in the catalog.
+
+## ProductDetailClient component
+
+`ProductDetailClient` is the `'use client'` rendering boundary. It handles all interactive state that cannot live in a server component:
+
+<Steps>
+  <Step title="Add to cart">
+    The **Añadir al carrito** button calls `addItem(product.id)` from `useCartStore` and fires a toast notification. The button switches to a green *Agregado* confirmation state after the first click (tracked by local `useState`).
+  </Step>
+  <Step title="Go to cart shortcut">
+    If `itemCount > 0`, a secondary **Ir al carrito** button appears below the primary CTA, linking directly to `/carrito`.
+  </Step>
+  <Step title="Share product">
+    The share button calls `navigator.share()` on supported devices. On desktop it falls back to copying the URL to the clipboard and shows a brief `✓ Copied` state.
+  </Step>
+  <Step title="Image lightbox">
+    Clicking the product image opens a full-screen lightbox overlay (Framer Motion `AnimatePresence`). Press `Escape` or click the backdrop to close it.
+  </Step>
+</Steps>
+
+## Complete data flow
+
+```typescript
+// Types used across the page
+interface Product {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  image: string;       // Supabase Storage public URL
+  categoryId: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  description: string;
+}
+```
+
+<Steps>
+  <Step title="Next.js resolves the dynamic segment">
+    The URL `/producto/abc-123` makes `params` resolve to `{ id: 'abc-123' }`.
+  </Step>
+  <Step title="generateMetadata runs first">
+    Fetches `getProductById('abc-123')` and returns the `<head>` metadata before rendering.
+  </Step>
+  <Step title="Page component fetches in parallel">
+    `getProductById`, `getProducts`, and `getCategories` all fire concurrently via `Promise.all`.
+  </Step>
+  <Step title="notFound() or render">
+    If the product is missing, `notFound()` halts rendering. Otherwise, related products are filtered and passed to `ProductDetailClient`.
+  </Step>
+  <Step title="Client hydration">
+    `ProductDetailClient` hydrates in the browser, connects to the Zustand cart store, and activates the lightbox, share, and add-to-cart interactions.
+  </Step>
+</Steps>
+
+For the Supabase query details and environment variable configuration, see [Data Fetching](/reference/data-fetching).

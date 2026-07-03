@@ -1,0 +1,102 @@
+---
+title: "Managing Floralé Product Categories in Admin"
+sidebarTitle: "Categories"
+description: "Create, edit, and delete Floralé product categories from the admin panel — including ID generation, the category schema, and orphan-product warnings."
+---
+
+Categories are the organisational backbone of the Floralé storefront. They group products into meaningful collections — such as gift boxes or breakfast sets — making it easy for customers to browse the catalogue. The admin panel's category section at `/admin/categories` lets you list all existing categories, add new ones, rename or re-describe them, and remove ones that are no longer needed. All changes persist immediately to the `categories` table in Supabase.
+
+## Category List
+
+The list view at `/admin/categories` fetches all categories ordered alphabetically by name using `supabase.from('categories').select('*').order('name')`. Each row in the list shows:
+
+- A coloured initial avatar (first letter of the category name)
+- The category **name** in bold
+- The category **description** (if one exists), truncated to a single line
+- An **edit (pencil)** icon linking to `/admin/categories/[id]/edit`
+- A **delete (trash)** icon with a confirmation dialog
+
+## Creating a Category
+
+Navigate to `/admin/categories/new` or click **Nueva categoría** on the list page. The form has two fields:
+
+| Field | Required | Notes |
+|---|---|---|
+| **Nombre** | ✅ | Display name for the category; also used to derive the ID |
+| **Descripción** | — | Optional short description shown in the admin list |
+
+Fill in the fields and click **Guardar categoría**. Under the hood, the form builds the `id` and inserts a new row:
+
+```typescript
+const id = name
+  .toLowerCase()
+  .replace(/\s+/g, '_')       // spaces → underscores
+  .replace(/[^a-z0-9_]/g, '')  // strip anything that isn't a-z, 0-9, or _
+
+await supabase.from('categories').insert({ id, name, description })
+```
+
+### ID Auto-Generation
+
+Category IDs follow the exact same slug algorithm used for products. For example:
+
+| Name entered | Generated ID |
+|---|---|
+| `Cajas de Regalo` | `cajas_de_regalo` |
+| `Desayunos` | `desayunos` |
+| `Ramos Personalizados` | `ramos_personalizados` |
+
+Because the ID is derived at creation time and never updated, it is important to get the name right before saving. Accents, `ñ`, and all non-alphanumeric characters are stripped silently — `"Niño"` and `"Nino"` would produce the same ID `nino`.
+
+## Editing a Category
+
+Click the pencil icon on any row or navigate directly to `/admin/categories/[id]/edit`. The page loads the current category with `supabase.from('categories').select('*').eq('id', id).single()` and pre-fills both fields. If the ID is not found, the page redirects back to the list.
+
+On submit, only `name` and `description` are updated — the `id` is never regenerated:
+
+```typescript
+await supabase.from('categories').update({ name, description }).eq('id', id)
+```
+
+This means you can freely rename a category (e.g., change its display name from `"Cajas"` to `"Cajas de Regalo"`) without affecting any of the products that reference it via `category_id`, because the slug ID remains unchanged.
+
+## Deleting a Category
+
+Click the trash icon on a category row. The confirmation dialog explicitly warns that products will not be deleted:
+
+> ¿Eliminar la categoría "…"? Los productos no se eliminarán pero quedarán sin categoría.
+
+After confirmation, `supabase.from('categories').delete().eq('id', id)` removes the row and the category disappears from the list.
+
+<Warning>
+  **Deleting a category orphans its products.** Floralé does not cascade-delete products when a category is removed. Any products whose `category_id` matches the deleted category will keep that `category_id` value in the database, but since no matching category row exists any more, those products will not appear under any group in the storefront or admin product list. Before deleting a category, reassign its products to a different category using the [product edit form](/admin/products).
+</Warning>
+
+## Categories Table Schema
+
+<ResponseField name="id" type="TEXT" required>
+  Primary key. Derived from the category name at creation time using the lowercase underscore slug algorithm. The ID never changes after insert — renaming a category only updates `name`, not `id`.
+</ResponseField>
+
+<ResponseField name="name" type="TEXT" required>
+  The human-readable display name shown in the storefront catalogue and the admin list. This is the value customers see when browsing by category.
+</ResponseField>
+
+<ResponseField name="description" type="TEXT">
+  Optional short description of the category. Defaults to an empty string `''`. Currently displayed in the admin list only; not rendered on the public storefront in the default layout.
+</ResponseField>
+
+## Default Seeded Categories
+
+The database schema seeds two starter categories so new installations have something to work with immediately:
+
+| ID | Name |
+|---|---|
+| `cajas` | Cajas de Regalo |
+| `desayunos` | Desayunos |
+
+These can be renamed, re-described, or deleted through the admin panel like any other category. Additional categories can be added at any time via `/admin/categories/new`.
+
+<Note>
+  For the full database schema including table definitions, foreign key constraints, RLS policies, and seed data, see the [Database Schema](/configuration/database-schema) reference page.
+</Note>

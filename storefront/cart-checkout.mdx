@@ -1,0 +1,367 @@
+---
+title: "Floralé Cart & WhatsApp Checkout Flow Explained"
+sidebarTitle: "Cart & Checkout"
+description: "Covers the Floralé cart page UI, order details form, CartDrawer, Zustand persistence, and how generateWhatsAppMessage builds the WhatsApp checkout link."
+---
+
+The cart and checkout experience in Floralé is intentionally simple: customers build a cart on the site, fill in four order detail fields, and send everything to Floralé's WhatsApp number as a pre-formatted message. There is no payment gateway — the order is confirmed by WhatsApp and secured with a 50% deposit. This page explains the cart page (`/carrito`), the `CartDrawer` accessible from every page, the Zustand store that persists cart state, and the `generateWhatsAppMessage` utility that assembles the final message.
+
+<Note>
+  Floralé does not process payments online. All orders are coordinated via WhatsApp at `+598 93 705 133`. A **50% deposit** is required to confirm the order, and items are prepared 24–48 hours before the agreed delivery date.
+</Note>
+
+## Cart page UI (`/carrito`)
+
+The `/carrito` page is a `'use client'` component. On mount it calls `getProducts()` to resolve product details from the `productId` references stored in the Zustand cart, then renders two columns on desktop: a scrollable item list on the left and a sticky order summary panel on the right.
+
+### Item list
+
+Each cart row shows:
+
+<CardGroup cols={2}>
+  <Card title="Product thumbnail" icon="image">
+    A 96 × 96 px square image (linked to the product detail page) rendered with `ImageWithSkeleton` for a smooth load.
+  </Card>
+  <Card title="Name & unit price" icon="tag">
+    Product name (linked to `/producto/{id}`) and unit price formatted in UYU via `formatPrice()`.
+  </Card>
+  <Card title="Quantity controls" icon="plus-minus">
+    `−` and `+` buttons that call `updateQuantity(productId, qty)`. Setting quantity to 0 removes the item automatically.
+  </Card>
+  <Card title="Line total" icon="calculator">
+    `price × quantity` displayed in the terracotta accent colour beside the quantity control.
+  </Card>
+</CardGroup>
+
+Each row also has a **trash icon** (calls `removeItem(productId)` and shows a toast) and a collapsible **per-item note** field — a plain text input that persists in the cart store via `updateNote(productId, note)`.
+
+```tsx
+// Quantity control snippet from app/(app)/carrito/page.tsx
+<div className="flex items-center gap-0.5 rounded-lg border border-stone-light/30">
+  <button
+    onClick={() => updateQuantity(product.id, quantity - 1)}
+    aria-label="Reducir cantidad"
+  >
+    <Minus className="h-3 w-3" />
+  </button>
+  <span>{quantity}</span>
+  <button
+    onClick={() => updateQuantity(product.id, quantity + 1)}
+    aria-label="Aumentar cantidad"
+  >
+    <Plus className="h-3 w-3" />
+  </button>
+</div>
+```
+
+### Order summary panel
+
+The right-hand panel is `lg:sticky lg:top-24` so it stays visible while the customer scrolls through a long item list. It contains:
+
+1. An **itemized list** — `product.name × qty` and the line total for each item.
+2. A horizontal rule followed by the **total** in UYU (`formatPrice(total)`).
+3. The **order details form** (see below).
+4. The **WhatsApp checkout button**.
+
+## Order details form
+
+Before the checkout button becomes functional, the customer must complete four fields. All four are required — attempting to submit with any field empty fires a toast notification and aborts the checkout.
+
+<CardGroup cols={2}>
+  <Card title="De (sender name)" icon="user">
+    Free-text input. Bound to `sender` state — the name of the person placing the order.
+  </Card>
+  <Card title="Para (recipient name)" icon="heart">
+    Free-text input. Bound to `recipient` state — the name of the person receiving the gift.
+  </Card>
+  <Card title="Fecha de entrega" icon="calendar">
+    A `DatePicker` component. Bound to `deliveryDate` state — the desired delivery date as a string.
+  </Card>
+  <Card title="Modalidad" icon="truck">
+    A toggle between **Envío** (delivery, with additional cost) and **Retiro** (free in-store pickup). Bound to `deliveryMethod` state.
+  </Card>
+</CardGroup>
+
+```tsx
+// Delivery method toggle from app/(app)/carrito/page.tsx
+<div className="flex gap-2">
+  {['Envío', 'Retiro'].map((m) => (
+    <button
+      key={m}
+      type="button"
+      onClick={() => setDeliveryMethod(m)}
+      className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-all ${
+        deliveryMethod === m
+          ? 'border-terracotta-400 bg-terracotta-50 text-terracotta-600'
+          : 'border-stone-light/30 text-stone'
+      }`}
+    >
+      {m}
+    </button>
+  ))}
+</div>
+```
+
+## WhatsApp checkout
+
+When all four order detail fields are filled, clicking **Enviar pedido por WhatsApp** calls `handleCheckout`:
+
+<Steps>
+  <Step title="Validate fields">
+    `if (!sender || !recipient || !deliveryDate || !deliveryMethod)` → show toast and return early.
+  </Step>
+  <Step title="Build the message">
+    `generateWhatsAppMessage(cartProducts, total, { sender, recipient, date: deliveryDate, method: deliveryMethod })` returns a formatted plain-text string.
+  </Step>
+  <Step title="Encode and open">
+    The message is URL-encoded and appended to `https://wa.me/59893705133?text=…`, then opened in a new tab via `window.open(url, '_blank')`.
+  </Step>
+</Steps>
+
+```tsx
+const WHATSAPP_NUMBER = '59893705133';
+
+const handleCheckout = () => {
+  if (!sender || !recipient || !deliveryDate || !deliveryMethod) {
+    addToast('Completa todos los datos del pedido');
+    return;
+  }
+  const message = generateWhatsAppMessage(cartProducts, total, {
+    sender,
+    recipient,
+    date: deliveryDate,
+    method: deliveryMethod,
+  });
+  const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+  window.open(url, '_blank');
+};
+```
+
+### generateWhatsAppMessage
+
+The `generateWhatsAppMessage` function in `lib/utils.ts` builds the pre-filled WhatsApp message from the cart and delivery details:
+
+```typescript
+// lib/utils.ts
+export function generateWhatsAppMessage(
+  items: { product: Product; quantity: number; note?: string }[],
+  total: number,
+  delivery?: {
+    sender: string;
+    recipient: string;
+    date: string;
+    method: string;
+  }
+): string {
+  const lines = items.map(({ product, quantity, note }) => {
+    let line = `• ${product.name} × ${quantity} — ${formatPrice(product.price * quantity)}`;
+    if (note) line += `\n   ✏️ ${note}`;
+    return line;
+  });
+
+  const parts = ['🌿 *Nuevo Pedido — Florale*', ''];
+
+  if (delivery) {
+    parts.push(
+      '━━━━━━━━━━━━━━━━',
+      '*Datos del pedido:*',
+      '━━━━━━━━━━━━━━━━',
+      '',
+      `*De:* ${delivery.sender}`,
+      `*Para:* ${delivery.recipient}`,
+      `*Entrega:* ${delivery.date}`,
+      `*Modalidad:* ${delivery.method}`,
+      ''
+    );
+  }
+
+  parts.push(
+    '━━━━━━━━━━━━━━━━',
+    '*Detalle del pedido:*',
+    '━━━━━━━━━━━━━━━━',
+    '',
+    ...lines,
+    '',
+    '━━━━━━━━━━━━━━━━',
+    `*Total: ${formatPrice(total)}*`,
+    '━━━━━━━━━━━━━━━━'
+  );
+
+  return parts.join('\n');
+}
+```
+
+The resulting message sent to WhatsApp looks like this:
+
+```text
+🌿 *Nuevo Pedido — Florale*
+
+━━━━━━━━━━━━━━━━
+*Datos del pedido:*
+━━━━━━━━━━━━━━━━
+
+*De:* Ana García
+*Para:* María López
+*Entrega:* 15/02/2025
+*Modalidad:* Envío
+
+━━━━━━━━━━━━━━━━
+*Detalle del pedido:*
+━━━━━━━━━━━━━━━━
+
+• Ramo de flores secas × 2 — $ 1.400
+   ✏️ Colores cálidos, por favor
+• Vela aromática × 1 — $ 490
+
+━━━━━━━━━━━━━━━━
+*Total: $ 1.890*
+━━━━━━━━━━━━━━━━
+```
+
+<Tip>
+  WhatsApp renders `*text*` as **bold**, so headers like `*Datos del pedido:*` and `*Total:*` appear bold in the chat thread — no additional formatting is required on the recipient's end.
+</Tip>
+
+## CartDrawer
+
+The `CartDrawer` component is mounted in the site-wide layout so it's accessible from every page — customers can review and adjust their cart without leaving the catalog or a product detail page.
+
+```tsx
+// components/cart-drawer.tsx (simplified)
+'use client';
+
+export function CartDrawer() {
+  const { items, isDrawerOpen, closeDrawer } = useCartStore();
+
+  return (
+    <AnimatePresence>
+      {isDrawerOpen && (
+        <>
+          {/* Semi-transparent backdrop */}
+          <motion.div
+            className="fixed inset-0 z-50 bg-charcoal/40 backdrop-blur-sm"
+            onClick={closeDrawer}
+          />
+          {/* Slide-in panel */}
+          <motion.aside
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+            className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-cream"
+          >
+            {/* Item list */}
+            {/* WhatsApp quick-checkout button when items exist */}
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+```
+
+The drawer slides in from the right with a spring animation. Clicking the backdrop or the `×` button calls `closeDrawer()`. When items are present a `WhatsAppButton` appears at the bottom of the drawer as a quick path to `/carrito` for the full checkout form.
+
+### Opening the drawer
+
+Any component can open the drawer by calling `openDrawer()` or `toggleDrawer()` from the cart store:
+
+```typescript
+const openDrawer = useCartStore((s) => s.openDrawer);
+// e.g., in the site header:
+<button onClick={openDrawer}>
+  <ShoppingBag />
+</button>
+```
+
+## Zustand cart store
+
+The cart state is managed by `useCartStore`, a Zustand store created with the `persist` middleware. It is defined in `lib/cart-store.ts`.
+
+```typescript
+// lib/cart-store.ts
+export const useCartStore = create<CartState>()(
+  persist(
+    (set) => ({
+      items: [],
+      isDrawerOpen: false,
+
+      addItem: (productId, quantity = 1) => set((state) => { /* ... */ }),
+      removeItem: (productId) => set((state) => ({ /* ... */ })),
+      updateQuantity: (productId, quantity) => set((state) => ({ /* ... */ })),
+      updateNote: (productId, note) => set((state) => ({ /* ... */ })),
+      clearCart: () => set({ items: [] }),
+
+      openDrawer: () => set({ isDrawerOpen: true }),
+      closeDrawer: () => set({ isDrawerOpen: false }),
+      toggleDrawer: () => set((state) => ({ isDrawerOpen: !state.isDrawerOpen })),
+    }),
+    {
+      name: 'florale-cart',       // localStorage key
+      partialize: (state) => ({ items: state.items }),
+    }
+  )
+);
+```
+
+### Store actions
+
+<ParamField path="addItem" type="(productId: string, quantity?: number) => void">
+  Adds a new item with `quantity` (default `1`) and an empty note. If the product is already in the cart, increments its quantity instead.
+</ParamField>
+
+<ParamField path="removeItem" type="(productId: string) => void">
+  Removes the item with the given `productId` entirely from the cart.
+</ParamField>
+
+<ParamField path="updateQuantity" type="(productId: string, quantity: number) => void">
+  Sets the item's quantity to the given value. Passing `0` or a negative number removes the item automatically.
+</ParamField>
+
+<ParamField path="updateNote" type="(productId: string, note: string) => void">
+  Updates the per-item note string. The note appears in the WhatsApp message prefixed with ✏️.
+</ParamField>
+
+<ParamField path="clearCart" type="() => void">
+  Empties all items from the cart. Typically called after a successful checkout.
+</ParamField>
+
+<ParamField path="openDrawer / closeDrawer / toggleDrawer" type="() => void">
+  Controls the `isDrawerOpen` boolean that drives the `CartDrawer` visibility. `isDrawerOpen` is **not** persisted to localStorage.
+</ParamField>
+
+### localStorage persistence
+
+The `persist` middleware serializes only the `items` array (via `partialize`) to `localStorage` under the key **`florale-cart`**. The `isDrawerOpen` flag is excluded so the drawer is always closed on a fresh page load.
+
+```typescript
+// What gets written to localStorage under 'florale-cart':
+{
+  "state": {
+    "items": [
+      { "productId": "abc-123", "quantity": 2, "note": "Colores cálidos" },
+      { "productId": "def-456", "quantity": 1, "note": "" }
+    ]
+  },
+  "version": 0
+}
+```
+
+<Warning>
+  The cart stores only `productId` — not product name or price. Actual product data is fetched fresh from Supabase on each page load. If a product is removed from the catalogue while it exists in a customer's cart, it will silently disappear from the rendered cart (the `filter` step drops `null` entries).
+</Warning>
+
+## Empty cart state
+
+When `items.length === 0`, the cart page shows a centred empty-state illustration with a link back to `/catalogo`:
+
+```tsx
+<div className="flex flex-col items-center justify-center gap-4 rounded-2xl bg-white py-16 text-center">
+  <ShoppingBag className="h-16 w-16 text-stone-light" />
+  <p className="text-lg font-medium text-charcoal">Tu carrito está vacío</p>
+  <p className="text-sm text-stone">Agrega productos desde nuestro catálogo</p>
+  <Link href="/catalogo">Explorar productos</Link>
+</div>
+```
+
+For the full cart store API reference, see [Cart Store](/reference/cart-store).

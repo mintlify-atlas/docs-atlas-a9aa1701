@@ -1,0 +1,416 @@
+---
+title: "Cart & Toast Stores — Floralé Client State"
+sidebarTitle: "Cart Store"
+description: "Reference for useCartStore and useToastStore — Zustand stores managing cart items, drawer visibility, and ephemeral toast notifications in Floralé."
+---
+
+Floralé manages all client-side shopping cart state through a Zustand store defined in `lib/cart-store.ts`. The store tracks which items have been added, exposes drawer open/close controls, and is automatically persisted to `localStorage` so customers don't lose their cart between page visits. A companion store in `lib/toast-store.ts` handles ephemeral notification messages that auto-dismiss after 2.5 seconds.
+
+<Note>
+  Both `useCartStore` and `useToastStore` are client-only hooks. Any component
+  that calls them must include the `'use client'` directive at the top of the
+  file. Do not call these hooks inside Server Components or Route Handlers.
+</Note>
+
+---
+
+## `useCartStore`
+
+The primary store for cart management. Created with `zustand/middleware`'s `persist` wrapper so that cart items survive full-page navigations and browser refreshes.
+
+```typescript
+import { useCartStore } from '@/lib/cart-store';
+```
+
+### Persistence
+
+| Setting | Value |
+|---|---|
+| Storage key | `florale-cart` |
+| Storage medium | `localStorage` |
+| Persisted fields | `items` only |
+| Not persisted | `isDrawerOpen` (always resets to `false` on load) |
+
+### `CartItem` (store-internal interface)
+
+The `CartItem` used inside the store is **different** from the `CartItem` exported by `types/index.ts`. The store version includes an extra `note` field for personalisation messages.
+
+```typescript
+export interface CartItem {
+  productId: string;  // UUID of the product
+  quantity: number;   // How many units the customer wants
+  note: string;       // Optional personalisation note (empty string by default)
+}
+```
+
+<Note>
+  The `CartItem` in `types/index.ts` does **not** have a `note` field. The
+  extended interface is exported directly from `lib/cart-store.ts` for use in
+  components that need to display or edit the note.
+</Note>
+
+### State fields
+
+<ResponseField name="items" type="CartItem[]">
+  The current contents of the cart. Each entry holds a `productId`, a
+  `quantity`, and a `note`. Persisted to `localStorage`.
+</ResponseField>
+
+<ResponseField name="isDrawerOpen" type="boolean">
+  Whether the cart slide-over drawer is currently visible. Defaults to `false`
+  on every page load (not persisted).
+</ResponseField>
+
+---
+
+## Actions
+
+### `addItem`
+
+Adds a product to the cart. If the product is already present its quantity is incremented; otherwise a new `CartItem` is inserted with an empty `note`.
+
+```typescript
+addItem(productId: string, quantity?: number): void
+```
+
+<ParamField path="productId" type="string" required>
+  The UUID of the product to add.
+</ParamField>
+
+<ParamField path="quantity" type="number">
+  The number of units to add. Defaults to `1`. When the item already exists
+  in the cart, this value is added to the existing quantity rather than
+  replacing it.
+</ParamField>
+
+<CodeGroup>
+
+```typescript Add one unit
+const { addItem } = useCartStore();
+
+// Add a single unit (quantity defaults to 1)
+addItem('product-uuid-here');
+```
+
+```typescript Add multiple units
+const { addItem } = useCartStore();
+
+// Add three units at once
+addItem('product-uuid-here', 3);
+```
+
+</CodeGroup>
+
+---
+
+### `removeItem`
+
+Removes a product from the cart entirely, regardless of quantity.
+
+```typescript
+removeItem(productId: string): void
+```
+
+<ParamField path="productId" type="string" required>
+  The UUID of the product to remove. If the ID is not found in the cart the
+  call is a no-op.
+</ParamField>
+
+<CodeGroup>
+
+```typescript Remove from cart
+const { removeItem } = useCartStore();
+
+removeItem('product-uuid-here');
+```
+
+</CodeGroup>
+
+---
+
+### `updateQuantity`
+
+Sets the quantity of a cart item to an explicit value. If the new quantity is `0` or negative the item is automatically removed from the cart.
+
+```typescript
+updateQuantity(productId: string, quantity: number): void
+```
+
+<ParamField path="productId" type="string" required>
+  The UUID of the product whose quantity should be updated.
+</ParamField>
+
+<ParamField path="quantity" type="number" required>
+  The new quantity. Passing `0` or any negative number removes the item from
+  the cart entirely.
+</ParamField>
+
+<CodeGroup>
+
+```typescript Quantity input handler
+const { updateQuantity } = useCartStore();
+
+function handleQuantityChange(productId: string, value: string) {
+  const quantity = parseInt(value, 10);
+  // Passing 0 will remove the item automatically
+  updateQuantity(productId, isNaN(quantity) ? 1 : quantity);
+}
+```
+
+</CodeGroup>
+
+---
+
+### `updateNote`
+
+Attaches or replaces the personalisation note on an existing cart item. Useful for gift messages or special instructions.
+
+```typescript
+updateNote(productId: string, note: string): void
+```
+
+<ParamField path="productId" type="string" required>
+  The UUID of the product whose note should be updated.
+</ParamField>
+
+<ParamField path="note" type="string" required>
+  The new note text. Pass an empty string to clear the note. If the product is
+  not in the cart the call is a no-op.
+</ParamField>
+
+<CodeGroup>
+
+```typescript Gift message input
+const { updateNote } = useCartStore();
+
+function handleNoteChange(productId: string, note: string) {
+  updateNote(productId, note);
+}
+```
+
+</CodeGroup>
+
+---
+
+### `clearCart`
+
+Removes all items from the cart at once. Drawer state is unaffected.
+
+```typescript
+clearCart(): void
+```
+
+<CodeGroup>
+
+```typescript After successful checkout
+const { clearCart, closeDrawer } = useCartStore();
+
+async function handleCheckout() {
+  await submitOrder();
+  clearCart();
+  closeDrawer();
+}
+```
+
+</CodeGroup>
+
+---
+
+### `openDrawer` / `closeDrawer` / `toggleDrawer`
+
+Controls for the cart slide-over drawer. These only affect the `isDrawerOpen` flag — they do not modify cart items.
+
+```typescript
+openDrawer(): void
+closeDrawer(): void
+toggleDrawer(): void
+```
+
+<CodeGroup>
+
+```typescript Cart icon button
+'use client';
+
+import { useCartStore } from '@/lib/cart-store';
+
+export function CartButton() {
+  const { toggleDrawer, items } = useCartStore();
+
+  return (
+    <button onClick={toggleDrawer} aria-label="Open cart">
+      🛒 {items.length}
+    </button>
+  );
+}
+```
+
+```typescript Drawer component
+'use client';
+
+import { useCartStore } from '@/lib/cart-store';
+
+export function CartDrawer() {
+  const { isDrawerOpen, closeDrawer, items } = useCartStore();
+
+  if (!isDrawerOpen) return null;
+
+  return (
+    <aside>
+      <button onClick={closeDrawer}>Close</button>
+      {items.map((item) => (
+        <p key={item.productId}>
+          {item.productId} × {item.quantity}
+          {item.note && <em> — {item.note}</em>}
+        </p>
+      ))}
+    </aside>
+  );
+}
+```
+
+</CodeGroup>
+
+---
+
+## Common patterns
+
+<CodeGroup>
+
+```typescript Reading cart totals
+'use client';
+
+import { useCartStore } from '@/lib/cart-store';
+
+export function CartSummary() {
+  const items = useCartStore((state) => state.items);
+
+  const totalQuantity = items.reduce((acc, item) => acc + item.quantity, 0);
+
+  return <span>{totalQuantity} item{totalQuantity !== 1 ? 's' : ''}</span>;
+}
+```
+
+```typescript Full checkout flow
+'use client';
+
+import { useCartStore } from '@/lib/cart-store';
+import { useToastStore } from '@/lib/toast-store';
+
+export function CheckoutButton() {
+  const { items, clearCart, closeDrawer } = useCartStore();
+  const { addToast } = useToastStore();
+
+  async function handleSubmit() {
+    await fetch('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+
+    clearCart();
+    closeDrawer();
+    addToast('Order placed — thank you! 🌸');
+  }
+
+  return (
+    <button onClick={handleSubmit} disabled={items.length === 0}>
+      Checkout
+    </button>
+  );
+}
+```
+
+</CodeGroup>
+
+---
+
+## `useToastStore`
+
+A lightweight Zustand store for ephemeral notification banners. Toasts are automatically removed after **2 500 ms** — no manual cleanup needed in the vast majority of cases.
+
+```typescript
+import { useToastStore } from '@/lib/toast-store';
+```
+
+### State fields
+
+<ResponseField name="toasts" type="Toast[]">
+  The list of currently visible toast notifications. Each entry has an `id`
+  (a `crypto.randomUUID()` string) and a `message` string.
+</ResponseField>
+
+### `addToast`
+
+Adds a new toast and schedules its automatic removal after 2 500 ms.
+
+```typescript
+addToast(message: string): void
+```
+
+<ParamField path="message" type="string" required>
+  The text to display inside the toast notification. Emojis are encouraged 🌸.
+</ParamField>
+
+### `removeToast`
+
+Manually removes a toast before its automatic timeout fires. Useful for dismissible toasts with a close button.
+
+```typescript
+removeToast(id: string): void
+```
+
+<ParamField path="id" type="string" required>
+  The `id` of the toast to remove. IDs are generated internally by
+  `crypto.randomUUID()` when `addToast` is called.
+</ParamField>
+
+### Usage
+
+<CodeGroup>
+
+```typescript Toast container
+'use client';
+
+import { useToastStore } from '@/lib/toast-store';
+
+export function ToastContainer() {
+  const { toasts, removeToast } = useToastStore();
+
+  return (
+    <div aria-live="polite">
+      {toasts.map((toast) => (
+        <div key={toast.id} role="status">
+          {toast.message}
+          <button onClick={() => removeToast(toast.id)}>✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+```typescript Triggering a toast
+'use client';
+
+import { useToastStore } from '@/lib/toast-store';
+import { useCartStore } from '@/lib/cart-store';
+
+export function AddToCartButton({ productId }: { productId: string }) {
+  const addItem = useCartStore((s) => s.addItem);
+  const addToast = useToastStore((s) => s.addToast);
+
+  function handleClick() {
+    addItem(productId);
+    addToast('Added to cart 🛒');
+  }
+
+  return <button onClick={handleClick}>Add to Cart</button>;
+}
+```
+
+</CodeGroup>
+
+<Tip>
+  You don't need to call `removeToast` after `addToast` unless you're building
+  a dismissible UI. The store's internal `setTimeout` cleans up the toast at
+  2 500 ms automatically.
+</Tip>

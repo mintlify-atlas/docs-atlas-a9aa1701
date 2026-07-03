@@ -1,0 +1,98 @@
+---
+title: "Supabase Project Setup Guide for Floralé"
+sidebarTitle: "Supabase Setup"
+description: "Step-by-step guide to creating a Supabase project, copying API keys, running the schema SQL, and creating an admin user for Floralé."
+---
+
+Floralé relies on Supabase for its PostgreSQL database, Row Level Security policies, authentication, and the `product-images` storage bucket. This guide walks you through creating a brand-new Supabase project, wiring up the environment variables, and running the schema migration so the app is ready to use in minutes.
+
+<Steps>
+
+<Step title="Create a Supabase account">
+  Go to [supabase.com](https://supabase.com) and sign up for a free account, or sign in if you already have one. The free tier is sufficient to run Floralé in development and for low-traffic production stores — it includes 500 MB of database storage, 1 GB of file storage, and up to 50,000 monthly active users.
+</Step>
+
+<Step title="Create a new project">
+  From your Supabase dashboard, click **New project**.
+
+  Fill in the following details:
+
+  - **Name** — e.g. `florale` or `florale-production`
+  - **Database password** — choose a strong, unique password and save it somewhere safe (you will need it if you ever connect via a direct Postgres client)
+  - **Region** — pick the region closest to your users to minimize latency; for Uruguay-based customers, **South America (São Paulo)** is a good default
+  - **Pricing plan** — Free is fine to start
+
+  Click **Create new project**. Supabase will take about 60 seconds to provision the database.
+</Step>
+
+<Step title="Copy the Project URL and anon key">
+  Once your project is ready, navigate to **Project Settings → API** in the left sidebar.
+
+  Under **Project URL**, copy the URL (it looks like `https://xxxxxxxxxxxxxxxxxxxx.supabase.co`).
+
+  Under **Project API keys**, copy the **anon / public** key.
+
+  Open (or create) `.env.local` in the Floralé project root and add both values:
+
+  ```bash
+  NEXT_PUBLIC_SUPABASE_URL=https://xxxxxxxxxxxxxxxxxxxx.supabase.co
+  NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  ```
+</Step>
+
+<Step title="Copy the Service Role key">
+  Still on the **Project Settings → API** page, find the **service_role / secret** key under **Project API keys**. Click the eye icon to reveal it, then copy it.
+
+  Add it to `.env.local`:
+
+  ```bash
+  SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  ```
+
+  <Warning>
+    The service role key bypasses all Row Level Security policies. Do not paste it anywhere other than `.env.local`, do not log it, and make sure `.env.local` is listed in `.gitignore` before your first commit.
+  </Warning>
+</Step>
+
+<Step title="Open the SQL Editor">
+  In the Supabase dashboard left sidebar, click **SQL Editor**, then click **New query** to open a blank editor pane. This is where you will run the Floralé schema migration in the next step.
+</Step>
+
+<Step title="Run the schema SQL">
+  Copy the full contents of `supabase-schema.sql` from the project root (or see the [Database Schema](/configuration/database-schema) page for the complete listing) and paste it into the SQL Editor.
+
+  Click **Run** (or press `Ctrl+Enter` / `Cmd+Enter`). The script will:
+
+  - Create the `categories` and `products` tables
+  - Add an index on `products(category_id)` for fast category filtering
+  - Seed two default categories (`cajas`, `desayunos`) and ten sample products
+  - Enable Row Level Security on both tables with public-read / authenticated-write policies
+  - Create the `product-images` storage bucket with matching access policies
+
+  You should see a `Success. No rows returned` message for each statement.
+
+  <Note>
+    The schema seeds two default categories — **Cajas de Regalo** (`cajas`) and **Desayunos** (`desayunos`) — along with ten sample products spread across both categories. All `INSERT` statements use `ON CONFLICT (id) DO NOTHING`, so re-running the script is safe and will not duplicate data.
+  </Note>
+</Step>
+
+<Step title="Create an admin user (optional)">
+  The Floralé admin panel at `/admin/login` uses Supabase Auth to authenticate store managers. To create your first admin user:
+
+  1. In the Supabase dashboard, go to **Authentication → Users**.
+  2. Click **Add user → Create new user**.
+  3. Enter an email address and a strong password.
+  4. Click **Create user**.
+
+  You can then log in to the admin panel at `http://localhost:3000/admin/login` (or your production URL) using those credentials. Authenticated users are permitted to insert, update, and delete products and categories per the RLS policies applied in the schema.
+</Step>
+
+</Steps>
+
+<Tip>
+  Want to dive deeper into Supabase features? The official docs cover everything from advanced RLS patterns to Edge Functions. Useful starting points:
+
+  - [Supabase Storage docs](https://supabase.com/docs/guides/storage) — uploading files, signed URLs, image transformations
+  - [Supabase Auth docs](https://supabase.com/docs/guides/auth) — OAuth providers, magic links, multi-factor authentication
+  - [Row Level Security guide](https://supabase.com/docs/guides/database/postgres/row-level-security) — writing and testing RLS policies
+</Tip>

@@ -1,0 +1,237 @@
+---
+title: "Floralé Catalog Page: Browsing Products by Category"
+sidebarTitle: "Catalog"
+description: "Learn how the /catalogo page fetches all products from Supabase server-side, groups them by category, and renders them with ProductCard and ProductGrid."
+---
+
+The catalog page at `/catalogo` is the main browsing surface of the Floralé storefront. It runs entirely as a Next.js **server component** — no `'use client'` directive — so all data fetching happens on the server before the page is sent to the browser. Products are loaded from Supabase in a single parallel fetch, then grouped by their `categoryId` and rendered into a responsive grid of `ProductCard` items.
+
+## Server-side data fetching
+
+The page calls `getProducts()` and `getCategories()` in parallel using `Promise.all`, so neither request blocks the other. Both functions live in `lib/products.ts` and hit the Supabase REST API directly over `fetch` with `cache: 'no-store'`, ensuring the catalog always reflects the latest inventory.
+
+```tsx
+// app/(app)/catalogo/page.tsx
+import { ProductGrid } from '@/components/product-grid';
+import { getProducts, getCategories } from '@/lib/products';
+
+export default async function CatalogoPage() {
+  const [products, categories] = await Promise.all([
+    getProducts(),
+    getCategories(),
+  ]);
+
+  return (
+    <div className="bg-cream pb-20">
+      <ProductGrid products={products} categories={categories} />
+    </div>
+  );
+}
+```
+
+<Tip>
+  Because this is a server component, there is no loading spinner for the initial page load — the HTML arrives fully populated. The `'use client'` boundary only begins at `ProductCard`, which needs the cart store.
+</Tip>
+
+## Data-fetching functions
+
+Both helpers in `lib/products.ts` call an internal `fetchFromSupabase<T>()` utility that reads `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from the environment and attaches the required `apikey` / `Authorization` headers automatically.
+
+<CodeGroup>
+```typescript getProducts
+export async function getProducts(): Promise<Product[]> {
+  const data = await fetchFromSupabase<Record<string, unknown>>(
+    'products?select=*&order=created_at.asc'
+  );
+  return data.map(mapProduct);
+}
+```
+
+```typescript getCategories
+export async function getCategories(): Promise<Category[]> {
+  return fetchFromSupabase<Category>(
+    'categories?select=*&order=id.asc'
+  );
+}
+```
+
+```typescript getProductById
+export async function getProductById(
+  id: string
+): Promise<Product | undefined> {
+  const data = await fetchFromSupabase<Record<string, unknown>>(
+    `products?select=*&id=eq.${encodeURIComponent(id)}`
+  );
+  const product = data[0];
+  return product ? mapProduct(product) : undefined;
+}
+```
+</CodeGroup>
+
+### Function parameters
+
+<ParamField path="getProducts" type="() => Promise<Product[]>">
+  Fetches all products ordered by `created_at` ascending. Returns an empty array if Supabase credentials are missing or the request fails.
+</ParamField>
+
+<ParamField path="getCategories" type="() => Promise<Category[]>">
+  Fetches all categories ordered by `id` ascending. Used to determine render order in `ProductGrid`.
+</ParamField>
+
+<ParamField path="getProductById" type="(id: string) => Promise<Product | undefined>">
+  Fetches a single product by its UUID. Returns `undefined` if not found, which triggers `notFound()` on the product detail page.
+</ParamField>
+
+## Data types
+
+```typescript
+interface Product {
+  id: string;
+  name: string;
+  description: string;
+  price: number;       // stored as integer UYU cents
+  image: string;       // public Supabase Storage URL
+  categoryId: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  description: string;
+}
+```
+
+<Note>
+  The Supabase column is `category_id` (snake_case). The `mapProduct()` helper in `lib/products.ts` converts it to camelCase `categoryId` so the rest of the app uses a consistent naming convention.
+</Note>
+
+## ProductGrid and category grouping
+
+`ProductGrid` receives the flat `products` array and the `categories` array, then builds a `GroupedProducts` map (`{ [categoryId]: Product[] }`) on the client. It iterates over `categories` in order, skipping any category with no products, and renders a titled section for each.
+
+```tsx
+// components/product-grid.tsx (simplified)
+export function ProductGrid({
+  products,
+  categories,
+}: {
+  products: Product[];
+  categories: Category[];
+}) {
+  const grouped = products.reduce<{ [key: string]: Product[] }>(
+    (acc, product) => {
+      if (!acc[product.categoryId]) acc[product.categoryId] = [];
+      acc[product.categoryId].push(product);
+      return acc;
+    },
+    {}
+  );
+
+  return (
+    <section id="catalogo">
+      <div className="mx-auto max-w-6xl">
+        {categories.map((category) => {
+          const catProducts = grouped[category.id];
+          if (!catProducts) return null;
+
+          return (
+            <div key={category.id} id={category.id}>
+              <h3>{category.name}</h3>
+              <p>{category.description}</p>
+              <div className="grid grid-cols-2 gap-6 lg:grid-cols-3">
+                {catProducts.map((product, idx) => (
+                  <ProductCard key={product.id} product={product} index={idx} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+```
+
+Each category section receives an `id` attribute matching `category.id`, enabling anchor-link navigation from a future category nav bar. Categories are rendered in the same order they come from Supabase (`order=id.asc`).
+
+## ProductCard component
+
+`ProductCard` is a `'use client'` component that renders the product thumbnail, name, and price, and exposes a floating **+** button to add the item to the cart without navigating away from the catalog.
+
+```tsx
+// components/product-card.tsx (simplified)
+'use client';
+
+export function ProductCard({
+  product,
+  index,
+}: {
+  product: Product;
+  index: number;
+}) {
+  const addItem = useCartStore((s) => s.addItem);
+  const addToast = useToastStore((s) => s.addToast);
+
+  const handleAdd = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    addItem(product.id);
+    addToast(`${product.name} agregado al carrito`);
+  };
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 24 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay: index * 0.08 }}
+    >
+      <Link href={`/producto/${product.id}`}>
+        <div className="relative overflow-hidden rounded-2xl">
+          {/* Square product image */}
+          <button onClick={handleAdd} aria-label={`Añadir ${product.name} al carrito`}>
+            <Plus />
+          </button>
+        </div>
+        <h3>{product.name}</h3>
+        <p>{formatPrice(product.price)}</p>
+      </Link>
+    </motion.article>
+  );
+}
+```
+
+### What the card renders
+
+<CardGroup cols={2}>
+  <Card title="Product image" icon="image">
+    A square `aspect-square` crop of the product's Supabase Storage image, using `ImageWithSkeleton` for a progressive loading effect.
+  </Card>
+  <Card title="Name & price" icon="tag">
+    Product name in the display font, formatted price in UYU via `formatPrice()` from `lib/utils.ts`.
+  </Card>
+  <Card title="Add-to-cart button" icon="cart-shopping">
+    Floating `+` circle in the bottom-right corner. Calls `addItem(product.id)` and shows a toast notification. Uses `e.stopPropagation()` so clicking it doesn't navigate to the product page.
+  </Card>
+  <Card title="Staggered animation" icon="sparkles">
+    Each card fades and slides up when it enters the viewport, with a delay of `index × 80ms` for a cascading reveal effect.
+  </Card>
+</CardGroup>
+
+## Summary
+
+<Steps>
+  <Step title="Request arrives at /catalogo">
+    Next.js renders `CatalogoPage` on the server as an async server component.
+  </Step>
+  <Step title="Parallel Supabase fetch">
+    `Promise.all([getProducts(), getCategories()])` fires two concurrent requests to the Supabase REST API.
+  </Step>
+  <Step title="ProductGrid groups products">
+    The flat product array is reduced into a `{ [categoryId]: Product[] }` map, then each category section is rendered in order.
+  </Step>
+  <Step title="ProductCard hydrates on the client">
+    Each card component hydrates in the browser, connects to the Zustand cart store, and enables the add-to-cart interaction.
+  </Step>
+</Steps>
+
+For the full Supabase query reference and environment variable setup, see [Data Fetching](/reference/data-fetching).

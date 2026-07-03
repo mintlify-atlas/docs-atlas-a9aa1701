@@ -1,0 +1,105 @@
+---
+title: "Environment Variables — Floralé Configuration"
+sidebarTitle: "Environment Variables"
+description: "Configure the three required environment variables for Floralé, including Supabase URL, anon key, and server-only service role key."
+---
+
+Floralé connects to Supabase for its database, authentication, and file storage. Before running the app locally or deploying to production, you must supply three environment variables in a `.env.local` file at the project root. Two of them are safe to expose in the browser; one is a privileged secret that must never leave the server.
+
+## Required variables
+
+<ResponseField name="NEXT_PUBLIC_SUPABASE_URL" type="string" required>
+  The base URL of your Supabase project, in the form `https://<project-ref>.supabase.co`. Every API request — database queries, auth flows, and storage operations — is sent to this endpoint. Because it is prefixed with `NEXT_PUBLIC_`, Next.js bundles it into the browser build and it is visible to anyone who inspects the page source. This is expected and safe; the URL on its own grants no access.
+</ResponseField>
+
+<ResponseField name="NEXT_PUBLIC_SUPABASE_ANON_KEY" type="string" required>
+  The public anonymous key issued by Supabase. It is a signed JWT that identifies your project and carries the `anon` role. All browser-side queries — browsing products, loading categories, reading cart state — use this key. Row Level Security (RLS) policies remain fully active, so the anon key can only read or write whatever your policies explicitly permit. Like the URL, this key is intentionally public and safe to ship in client-side code.
+</ResponseField>
+
+<ResponseField name="SUPABASE_SERVICE_ROLE_KEY" type="string" required>
+  The service role key is a privileged JWT that **bypasses Row Level Security entirely**. It is used only in server-side code (API routes, Server Actions, or `lib/supabase-service.ts`) to perform admin operations such as seeding data or managing uploads on behalf of users. This variable has no `NEXT_PUBLIC_` prefix, so Next.js never includes it in the browser bundle.
+</ResponseField>
+
+<Warning>
+  **Never expose `SUPABASE_SERVICE_ROLE_KEY` in client-side code or commit it to version control.** Any process that holds this key can read, write, and delete every row in your database, ignoring all RLS policies. Add `.env.local` to your `.gitignore`, and rotate the key immediately in the Supabase dashboard if it is ever leaked.
+</Warning>
+
+## `.env.local` example
+
+Create a file named `.env.local` in the project root (next to `package.json`) and populate it with the values from your Supabase dashboard:
+
+```bash
+# .env.local — never commit this file to version control
+
+# Public — safe for browser bundles
+NEXT_PUBLIC_SUPABASE_URL=https://xxxxxxxxxxxxxxxxxxxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+# Private — server-side only, bypasses RLS
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+## Where to find each value
+
+All three values live in one place: **Project Settings → API** in the Supabase dashboard.
+
+1. Open [supabase.com](https://supabase.com) and navigate to your project.
+2. Click **Project Settings** (gear icon) in the left sidebar.
+3. Select the **API** tab.
+
+| Variable | Dashboard label | Section |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | **Project URL** | Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | **anon / public** | Project API keys |
+| `SUPABASE_SERVICE_ROLE_KEY` | **service_role / secret** | Project API keys |
+
+Copy each value and paste it into `.env.local`. Restart your dev server (`npm run dev`) after saving the file so Next.js picks up the new variables.
+
+## Public vs. server-only variables
+
+Next.js uses the `NEXT_PUBLIC_` prefix as an explicit opt-in for client-side exposure. Variables **with** the prefix are inlined into the JavaScript bundle at build time and readable by anyone. Variables **without** the prefix are only available in Node.js server processes — API routes, middleware, and Server Actions — and are stripped out of the browser bundle entirely.
+
+| Variable | Available in browser | Available on server | Respects RLS |
+|---|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | ✅ | ✅ | — |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | ✅ | ✅ Yes |
+| `SUPABASE_SERVICE_ROLE_KEY` | ❌ Never | ✅ | ❌ Bypasses |
+
+## Supabase client initializations
+
+Floralé maintains two separate client instances to enforce this boundary clearly.
+
+**`lib/supabase.ts` — browser client (anon key)**
+
+Used in React components, hooks, and any code that runs in the browser. All queries respect Row Level Security policies.
+
+```typescript
+import { createClient } from '@supabase/supabase-js'
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+```
+
+**`lib/supabase-service.ts` — server-only admin client (service role)**
+
+Used exclusively in server-side code. Session persistence and token refresh are disabled because this client authenticates via the service role key rather than a user session, and it should never be instantiated in the browser.
+
+```typescript
+import { createClient } from '@supabase/supabase-js'
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+
+export const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+})
+```
+
+<Note>
+  If you import `supabaseAdmin` from `lib/supabase-service.ts` inside a React component or any other file that gets bundled for the browser, Next.js will throw a build error because `SUPABASE_SERVICE_ROLE_KEY` is undefined on the client. Keep all imports of `supabaseAdmin` inside `app/api/`, server components marked with `"use server"`, or files that Next.js never bundles for the client.
+</Note>

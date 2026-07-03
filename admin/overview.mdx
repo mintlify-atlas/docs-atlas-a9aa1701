@@ -1,0 +1,124 @@
+---
+title: "Floralé Admin Panel: Access, Login & Dashboard"
+sidebarTitle: "Overview"
+description: "Learn how to access the Floralé admin panel, sign in with Supabase email/password auth, and navigate the dashboard's product and category tools."
+---
+
+The Floralé admin panel is the backstage interface for managing everything that appears in the storefront — products, categories, images, and pricing. It lives at `/admin` and is protected by Supabase email/password authentication, so only authorised users can reach it. The panel is built as a client-side Next.js app; the layout checks for a valid Supabase session on every route and instantly redirects unauthenticated visitors to the login page.
+
+## Authentication
+
+Access to every route under `/admin` (except `/admin/login` itself) requires an active Supabase session. The admin layout calls `supabase.auth.getSession()` on mount and also subscribes to `onAuthStateChange`, so if a session expires mid-session the user is redirected to the login page automatically.
+
+### Logging in
+
+<Steps>
+  <Step title="Open the login page">
+    Navigate to `/admin/login` in your browser. You will see the **Panel de Administración** form with email and password fields.
+  </Step>
+  <Step title="Enter your credentials">
+    Type the email address and password for your Supabase admin account. These are the credentials stored in your Supabase project's **Authentication → Users** table — not environment variables.
+  </Step>
+  <Step title="Submit the form">
+    Click **Ingresar**. The form calls `supabase.auth.signInWithPassword({ email, password })` using the browser Supabase client.
+
+    ```tsx
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    ```
+
+    If the credentials are incorrect, Supabase returns `"Invalid login credentials"` and the UI displays a friendly error message.
+  </Step>
+  <Step title="Redirected to the dashboard">
+    On success, `router.push('/admin')` navigates you to the main dashboard. The sticky header nav appears, showing links to **Productos**, **Categorías**, **Tienda**, and a **Salir** (sign out) button.
+  </Step>
+</Steps>
+
+To sign out, click the **Salir** button in the top-right navigation. This calls `supabase.auth.signOut()` and redirects back to `/admin/login`.
+
+## The Dashboard
+
+The dashboard at `/admin` gives you a quick snapshot of the store at a glance. On load, it fires two `count: 'exact'` queries in parallel — one against the `products` table and one against the `categories` table — and displays the totals on summary cards.
+
+```tsx
+Promise.all([
+  supabase.from('products').select('*', { count: 'exact', head: true }),
+  supabase.from('categories').select('*', { count: 'exact', head: true }),
+]).then(([prodRes, catRes]) => {
+  if (prodRes.count !== null) setProductCount(prodRes.count)
+  if (catRes.count !== null) setCategoryCount(catRes.count)
+})
+```
+
+The three cards link to the two management sections and the public storefront:
+
+<CardGroup cols={3}>
+  <Card title="Products" icon="box" href="/admin/products">
+    Displays the total number of registered products. Click to open the product list where you can search, edit, or delete items and add new ones.
+  </Card>
+  <Card title="Categories" icon="list" href="/admin/categories">
+    Displays the total number of categories. Click to manage the category list that organises products in the storefront.
+  </Card>
+  <Card title="View Storefront" icon="arrow-up-right-from-square" href="/">
+    Opens the public Floralé storefront in a new tab so you can preview how your changes look to customers without leaving the admin panel.
+  </Card>
+</CardGroup>
+
+## Supabase Clients
+
+Floralé uses two separate Supabase client instances with different permission levels.
+
+| Client | File | Key used | Where it runs |
+|---|---|---|---|
+| `supabase` | `lib/supabase.ts` | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser (client components) |
+| `supabaseAdmin` | `lib/supabase-service.ts` | `SUPABASE_SERVICE_ROLE_KEY` | Server only |
+
+The **browser client** (`supabase`) is created with the public anon key and is safe to ship in client bundles. It respects Row Level Security policies, so unauthenticated requests can only `SELECT` from public tables and authenticated users can mutate data.
+
+```typescript
+// lib/supabase.ts
+import { createClient } from '@supabase/supabase-js'
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+```
+
+The **service-role client** (`supabaseAdmin`) is initialised with the service role key, which bypasses all RLS policies. It has `autoRefreshToken` and `persistSession` disabled because it is intended for short-lived server-side operations only.
+
+```typescript
+// lib/supabase-service.ts
+import { createClient } from '@supabase/supabase-js'
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+
+export const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+})
+```
+
+<Warning>
+  **Never expose `SUPABASE_SERVICE_ROLE_KEY` to the browser.** Unlike `NEXT_PUBLIC_*` variables, this key must not be prefixed with `NEXT_PUBLIC_` and must never be imported into a `'use client'` component. Anyone who obtains the service role key can read and write every row in your database, bypassing Row Level Security entirely.
+</Warning>
+
+## Row Level Security
+
+Both `products` and `categories` tables enforce RLS policies that mirror the two-client setup:
+
+```sql
+-- Anyone can read products and categories (storefront)
+CREATE POLICY "Public read" ON products FOR SELECT USING (true);
+CREATE POLICY "Public read" ON categories FOR SELECT USING (true);
+
+-- Only authenticated users can write (admin panel)
+CREATE POLICY "Auth write" ON products
+  FOR ALL USING (auth.role() = 'authenticated');
+CREATE POLICY "Auth write" ON categories
+  FOR ALL USING (auth.role() = 'authenticated');
+```
+
+The admin panel relies entirely on the browser `supabase` client for all CRUD operations. Because the user is signed in via `signInWithPassword`, each request carries a valid JWT and satisfies the `auth.role() = 'authenticated'` check automatically.

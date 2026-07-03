@@ -1,0 +1,127 @@
+---
+title: "Managing Floralé Products in the Admin Panel"
+sidebarTitle: "Products"
+description: "Create, edit, delete, and search products in the Floralé admin panel — covering form fields, ID generation, image uploads, and the product table schema."
+---
+
+Products are the core inventory of the Floralé gift shop. The admin panel's product section, found at `/admin/products`, lets you list all products, search by name, add new items, edit existing ones, and remove products you no longer offer. Every change is written directly to the `products` table in Supabase using the browser client, so updates appear in the storefront immediately after saving.
+
+## Product List
+
+The list view at `/admin/products` fetches all products ordered by `created_at` descending, alongside the full category list. Products are then **grouped by category** — each category heading shows a count badge and the products beneath it display a thumbnail, name, and formatted price (in Uruguayan pesos, UYU).
+
+A search bar at the top filters products in real time by name (case-insensitive, client-side). Searching narrows results across all category groups simultaneously. If a category has no matching products after filtering, its group is hidden entirely.
+
+Each product row has two action buttons:
+
+- **Edit (pencil icon)** — navigates to `/admin/products/[id]/edit`
+- **Delete (trash icon)** — shows a browser confirmation dialog, then calls `supabase.from('products').delete().eq('id', id)` and removes the row from the UI on success
+
+## Creating a Product
+
+Navigate to `/admin/products/new` or click **Nuevo producto** on the list page. Fill in the form and click **Guardar producto**.
+
+### Form Fields
+
+| Field | Required | Notes |
+|---|---|---|
+| **Nombre** | ✅ | Product display name; also used to derive the ID |
+| **Descripción** | — | Free-text description shown in the storefront |
+| **Precio (UYU)** | ✅ | Integer amount in Uruguayan pesos; stored as `INTEGER` |
+| **Categoría** | — | Select from existing categories; defaults to the first one alphabetically |
+| **Imagen** | — | Upload via the image picker; stored in Supabase Storage |
+
+### ID Auto-Generation
+
+The product `id` is derived from the name at save time using the following transformation:
+
+```typescript
+const id = name
+  .toLowerCase()
+  .replace(/\s+/g, '_')      // spaces → underscores
+  .replace(/[^a-z0-9_]/g, '') // remove anything that isn't a-z, 0-9, or _
+```
+
+For example, the name `"Box de Corazón con Peluche"` becomes `box_de_corazn_con_peluche` (the accented `ó` is stripped because it is not in `[a-z0-9_]`).
+
+<Tip>
+  Choose product names that are descriptive but also produce clean IDs. Special characters like accents, ñ, and punctuation are silently removed during ID generation, so two different names could theoretically produce the same ID. If a duplicate ID is inserted, Supabase will return a primary key violation error. Keep names unique and consider previewing the resulting ID before saving.
+</Tip>
+
+### Image Upload
+
+The `ImageUpload` component handles file selection and upload to Supabase Storage. When a user picks a file it:
+
+1. Generates a unique filename: `` `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}` ``
+2. Uploads the file to the `product-images` bucket via `supabase.storage.from('product-images').upload(fileName, file)`
+3. Retrieves the public URL with `supabase.storage.from('product-images').getPublicUrl(fileName)`
+4. Stores the public URL string in the `image` field of the product form
+
+```tsx
+const { error } = await supabase.storage
+  .from('product-images')
+  .upload(fileName, file)
+
+const { data: urlData } = supabase.storage
+  .from('product-images')
+  .getPublicUrl(fileName)
+
+onChange(urlData.publicUrl)
+```
+
+The resulting public URL is what gets saved to the `image` column in the `products` table. Make sure the `product-images` bucket has **public** read access enabled in your Supabase Storage settings, otherwise images will not appear in the storefront.
+
+## Editing a Product
+
+Navigate to `/admin/products/[id]/edit` or click the pencil icon on any product row. The page loads the product's current data with `supabase.from('products').select('*').eq('id', id).single()` and pre-populates all form fields. If the product ID does not exist, the page redirects back to `/admin/products`.
+
+The edit form is identical to the create form. On submit it calls `supabase.from('products').update({ ... }).eq('id', id)`. Note that **editing does not regenerate the ID** — only `name`, `description`, `price`, `category_id`, and `image` are updated in place.
+
+## Deleting a Product
+
+Click the trash icon on any product row in the list. A browser `confirm()` dialog asks for confirmation before the delete request is sent:
+
+```typescript
+if (!confirm('¿Estás seguro de eliminar este producto?')) return
+const { error } = await supabase.from('products').delete().eq('id', id)
+```
+
+A delete is permanent. There is no soft-delete or recycle bin — once confirmed, the row is removed from the `products` table and the image file in Supabase Storage is **not** automatically deleted. Clean up orphaned images manually in the Supabase dashboard under **Storage → product-images** if needed.
+
+## Products Table Schema
+
+<ResponseField name="id" type="TEXT" required>
+  Primary key. Auto-generated from the product name using the lowercase-and-underscore slug algorithm. Cannot be changed after creation.
+</ResponseField>
+
+<ResponseField name="name" type="TEXT" required>
+  The display name of the product as it appears in the storefront and the admin list. Maximum length is unrestricted by the schema but keep names concise.
+</ResponseField>
+
+<ResponseField name="description" type="TEXT">
+  Optional free-text description. Defaults to an empty string `''` if not provided.
+</ResponseField>
+
+<ResponseField name="price" type="INTEGER" required>
+  Price in Uruguayan pesos (UYU), stored as a whole integer. The `formatPrice` utility formats this as a localised currency string in the UI. Do not store decimals.
+</ResponseField>
+
+<ResponseField name="image" type="TEXT">
+  Full public URL pointing to the image file in the `product-images` Supabase Storage bucket. Empty string if no image has been uploaded.
+</ResponseField>
+
+<ResponseField name="category_id" type="TEXT">
+  Foreign key referencing `categories.id`. Links the product to a category for grouping in the storefront and admin list. Can be empty if no category is selected.
+</ResponseField>
+
+<ResponseField name="created_at" type="TIMESTAMPTZ">
+  Set automatically by Supabase when the row is inserted. Used to order the product list (newest first).
+</ResponseField>
+
+<ResponseField name="updated_at" type="TIMESTAMPTZ">
+  Updated automatically by a Supabase trigger on each row mutation. Not currently displayed in the admin UI but available for audit purposes.
+</ResponseField>
+
+<Note>
+  The `price` column is typed as `INTEGER`, not `NUMERIC` or `DECIMAL`. This means prices must be whole numbers in UYU. The form parses the input with `parseInt(price, 10)` before inserting, so any decimal portion entered by the user is silently truncated. Always enter prices as whole integers.
+</Note>

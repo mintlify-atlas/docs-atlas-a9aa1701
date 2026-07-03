@@ -1,47 +1,103 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Floralé — Local Development Setup"
+sidebarTitle: "Quickstart"
+description: "Clone Floralé, install dependencies, wire up your Supabase project, and have the Next.js gift shop running on localhost in under ten minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+This guide walks you through every step needed to run Floralé on your local machine: cloning the repository, installing packages, connecting to a Supabase project, seeding the database schema, and starting the Next.js development server. The entire setup takes less than ten minutes assuming you already have Node.js ≥ 18 and a Supabase account.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+<Note>
+  Before you begin, make sure you have a Supabase project created. If you haven't set one up yet, follow the [Supabase Setup guide](/configuration/supabase-setup) for a full walkthrough — including how to obtain your project URL, anon key, and service role key.
+</Note>
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
 
-    ```bash
-    npm install your-package
-    ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+<Step title="Clone the repository">
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+Open a terminal and clone the Floralé repository, then change into the project directory:
 
-    ```bash
-    your-cli start
-    ```
-  </Step>
+```bash
+git clone https://github.com/dlampatricio/florale.git && cd florale
+```
+
+</Step>
+
+<Step title="Install dependencies">
+
+Install the project's npm dependencies using your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install
+```
+
+```bash yarn
+yarn install
+```
+
+```bash pnpm
+pnpm install
+```
+
+</CodeGroup>
+
+This installs Next.js 16, React 19, Tailwind CSS v4, Supabase JS, Zustand, Framer Motion, and all other dependencies listed in `package.json`.
+
+</Step>
+
+<Step title="Configure environment variables">
+
+Create a `.env.local` file at the root of the project and populate it with the three required environment variables from your Supabase project dashboard:
+
+```bash .env.local
+# Found in: Supabase Dashboard → Project Settings → API → Project URL
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+
+# Found in: Supabase Dashboard → Project Settings → API → anon / public key
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+
+# Found in: Supabase Dashboard → Project Settings → API → service_role key
+# WARNING: Never expose this key in client-side code or commit it to source control
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+<Warning>
+  `SUPABASE_SERVICE_ROLE_KEY` bypasses all Row Level Security policies. It is only used in server-side API routes and admin operations. Never reference it in client components or commit `.env.local` to version control.
+</Warning>
+
+</Step>
+
+<Step title="Set up the Supabase database">
+
+Floralé ships with a complete SQL schema file at `supabase-schema.sql`. This script creates the `categories` and `products` tables, adds the required indexes, enables Row Level Security, defines all read/write policies, creates the `product-images` Storage bucket, and seeds the database with the initial product catalog.
+
+To run it:
+
+1. Open your [Supabase Dashboard](https://supabase.com/dashboard).
+2. Select your project and navigate to **SQL Editor**.
+3. Click **New query**, paste the entire contents of `supabase-schema.sql`, and click **Run**.
+
+You should see confirmation that the tables, indexes, policies, and seed data were all created successfully.
+
+For a detailed explanation of every SQL statement — including how RLS policies protect write operations and how the Storage bucket is configured — see the [Supabase Setup guide](/configuration/supabase-setup).
+
+</Step>
+
+<Step title="Start the development server">
+
+Start the Next.js development server:
+
+```bash
+npm run dev
+```
+
+Once the server is ready, open [http://localhost:3000](http://localhost:3000) in your browser. You should see the Floralé landing page with the animated logo and an "Entrar a la Tienda" button that links through to the product catalog at `/catalogo`.
+
+</Step>
+
 </Steps>
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  The admin panel is available at [http://localhost:3000/admin/login](http://localhost:3000/admin/login). Sign in with the email and password of the user you created in your Supabase project under **Authentication → Users**. Once authenticated, you can manage products at `/admin/products` and categories at `/admin/categories`.
 </Tip>

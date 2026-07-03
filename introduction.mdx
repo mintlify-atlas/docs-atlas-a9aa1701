@@ -1,0 +1,106 @@
+---
+title: "Floralé — Full-Stack Artisanal Gift Shop Overview"
+sidebarTitle: "Introduction"
+description: "Explore Floralé's architecture: a Next.js 16 App Router storefront backed by Supabase, featuring a product catalog, Zustand cart, and WhatsApp-based checkout."
+---
+
+Floralé is a full-stack artisanal gift shop web application built with Next.js 16 (App Router) and Supabase. It lets customers browse handcrafted gift boxes and breakfasts, manage a persistent shopping cart, and submit orders directly through a formatted WhatsApp message — no payment gateway required. A protected admin panel lets the shop owner create, update, and delete products and categories, and upload product images to Supabase Storage, all secured by Supabase email/password authentication.
+
+## Architecture Overview
+
+Floralé is split into two distinct surfaces that share a single Supabase project as their backend.
+
+**Storefront** — The customer-facing side of the application. It includes a landing page (`/`), a browsable product catalog (`/catalogo`), individual product detail pages (`/producto/[id]`), a shopping cart (`/carrito`), a contact page (`/contacto`), and an informational page (`/informacion`). Cart state is managed with Zustand and persisted to `localStorage` so it survives page refreshes. When a customer is ready to check out, the cart contents are serialised into a pre-filled WhatsApp message and opened in a new tab — no credit-card flow, no webhooks.
+
+**Admin Panel** — Protected routes under `/admin` require an authenticated Supabase session. Admins log in via `/admin/login` and can then manage products at `/admin/products` and categories at `/admin/categories`. Product images are uploaded to a public Supabase Storage bucket named `product-images`. Row Level Security (RLS) policies on the `products` and `categories` tables ensure that unauthenticated users can only read data, while authenticated users can perform full CRUD operations.
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16.2.9 — App Router, React 19 |
+| Styling | Tailwind CSS v4, Inter & Sora fonts |
+| Animation | Framer Motion 12 |
+| Icons | Lucide React |
+| State management | Zustand 5 (cart + toast notifications) |
+| Database | Supabase (PostgreSQL) with RLS |
+| Auth | Supabase Auth (email/password) |
+| File storage | Supabase Storage (`product-images` bucket) |
+| Deployment | Vercel (`florale-uy.vercel.app`) |
+
+Next.js image optimisation is configured to accept remote images from both `images.unsplash.com` and any `*.supabase.co` hostname, covering product photos stored in Supabase Storage.
+
+## Data Model
+
+Floralé's database contains two tables — `products` and `categories` — whose shapes are reflected directly in TypeScript interfaces defined in `types/index.ts`.
+
+**`Product`** represents a single item in the shop catalog:
+
+```typescript
+export interface Product {
+  id: string;          // Unique slug, e.g. "corazon_red_oso"
+  name: string;        // Display name shown on product cards
+  description: string; // Long-form product description
+  price: number;       // Price in local currency (integer cents)
+  image: string;       // URL — Supabase Storage or relative path
+  categoryId: string;  // Foreign key to Category.id
+}
+```
+
+**`Category`** groups related products (e.g. "Cajas de Regalo", "Desayunos"):
+
+```typescript
+export interface Category {
+  id: string;          // Unique slug, e.g. "cajas"
+  name: string;        // Human-readable category label
+  description: string; // Short description of the category
+}
+```
+
+**`CartItem`** is a lightweight client-side record stored in Zustand and `localStorage` — it holds only references, not full product data:
+
+```typescript
+export interface CartItem {
+  productId: string;   // References Product.id
+  quantity: number;    // Number of units added to cart
+}
+```
+
+The database schema also includes a `created_at` and `updated_at` timestamp on each product row (managed automatically by Supabase), and a `category_id` index for fast filtered queries.
+
+## WhatsApp Order Flow
+
+Floralé deliberately omits a payment gateway. When a customer proceeds to checkout from `/carrito`, the application resolves each `CartItem` to its full `Product` record, formats the order as a human-readable message (item names, quantities, and a total), and opens `https://wa.me/` with that message pre-filled. The shop owner receives the order in WhatsApp and coordinates fulfilment and payment manually. This keeps the stack simple, avoids PCI-DSS compliance requirements, and suits a small artisanal business where personal communication is part of the brand.
+
+## Explore the Docs
+
+<CardGroup cols={2}>
+  <Card
+    title="Storefront & Catalog"
+    icon="store"
+    href="/storefront/catalog"
+  >
+    Learn how the product catalog, product detail pages, and cart work together in the Next.js App Router.
+  </Card>
+  <Card
+    title="Admin Panel Overview"
+    icon="shield-check"
+    href="/admin/overview"
+  >
+    Understand the protected admin routes, Supabase Auth session handling, and image upload flow.
+  </Card>
+  <Card
+    title="Supabase Setup"
+    icon="database"
+    href="/configuration/supabase-setup"
+  >
+    Step-by-step guide to creating the Supabase project, running the schema SQL, and configuring RLS policies.
+  </Card>
+  <Card
+    title="Data Fetching Reference"
+    icon="code"
+    href="/reference/data-fetching"
+  >
+    API reference for all server-side and client-side data fetching patterns used across Floralé.
+  </Card>
+</CardGroup>
