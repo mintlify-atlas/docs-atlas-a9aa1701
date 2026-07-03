@@ -53,12 +53,12 @@ Three Supabase requests fire concurrently so none of them blocks the others:
 | `getCategories()` | Category list used to find the current product's category label |
 
 <Tip>
-  `getProductById` is the only fetch that directly uses the URL parameter. The other two calls return stable, ordered lists that are filtered client-side — no additional Supabase query is needed for related products.
+  `getProductById` is the only fetch that directly uses the URL parameter. The other two calls return stable, ordered lists that are filtered server-side — no additional Supabase query is needed for related products.
 </Tip>
 
 ## generateMetadata for SEO
 
-`generateMetadata` is an exported async function co-located with the page. Next.js calls it before rendering to inject `<title>`, `<meta description>`, and social-graph tags into the document `<head>`. It also awaits `params` and calls `getProductById`, which means the product is fetched twice per request — once for metadata and once for the page body. Next.js deduplicates identical `fetch` calls within a single render cycle, so in practice only one network request is made.
+`generateMetadata` is an exported async function co-located with the page. Next.js calls it before rendering to inject `<title>`, `<meta description>`, and social-graph tags into the document `<head>`. It also awaits `params` and calls `getProductById`. Because all fetches in `lib/products.ts` use `cache: 'no-store'`, each call goes directly to the Supabase REST API without caching.
 
 ```tsx
 import type { Metadata } from 'next';

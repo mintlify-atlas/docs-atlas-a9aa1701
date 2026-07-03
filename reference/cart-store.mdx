@@ -1,5 +1,5 @@
 ---
-title: "Cart & Toast Stores — Floralé Client State"
+title: "Cart & Toast Stores — Floralé Client State Reference"
 sidebarTitle: "Cart Store"
 description: "Reference for useCartStore and useToastStore — Zustand stores managing cart items, drawer visibility, and ephemeral toast notifications in Floralé."
 ---
@@ -39,7 +39,7 @@ The `CartItem` used inside the store is **different** from the `CartItem` export
 export interface CartItem {
   productId: string;  // UUID of the product
   quantity: number;   // How many units the customer wants
-  note: string;       // Optional personalisation note (empty string by default)
+  note: string;       // Personalisation note — always a string, defaults to '' on new items
 }
 ```
 

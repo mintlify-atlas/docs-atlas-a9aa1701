@@ -1,5 +1,5 @@
 ---
-title: "Data Fetching Functions — Floralé Product API"
+title: "Data Fetching Functions — Floralé Product API Reference"
 sidebarTitle: "Data Fetching"
 description: "Reference for getProducts, getProductById, getProductsByCategory, and getCategories — async helpers that query Supabase via the REST API."
 ---
@@ -9,8 +9,9 @@ Floralé's data-fetching layer lives in `lib/products.ts` and exposes four async
 <Note>
   Both `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` must be
   present in your environment. If either variable is missing, every function
-  silently returns an empty array rather than throwing, so the UI degrades
-  gracefully during misconfigured builds.
+  returns a safe empty value (`[]` for list functions, `undefined` for
+  `getProductById`) rather than throwing, so the UI degrades gracefully during
+  misconfigured builds.
 </Note>
 
 ---
@@ -315,12 +316,12 @@ export default async function ShopPage() {
 
 All four functions share the same internal `fetchFromSupabase` helper, which applies a consistent error-handling strategy:
 
-| Condition | Behaviour |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_ANON_KEY` not set | Returns `[]` immediately |
-| Non-`ok` HTTP response from Supabase | Returns `[]` |
-| Network error or thrown exception | Returns `[]` (caught internally) |
-| Empty result set | Returns `[]` normally |
+| Condition | `getProducts` / `getProductsByCategory` / `getCategories` | `getProductById` |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_ANON_KEY` not set | Returns `[]` immediately | Returns `undefined` immediately |
+| Non-`ok` HTTP response from Supabase | Returns `[]` | Returns `undefined` |
+| Network error or thrown exception | Returns `[]` (caught internally) | Returns `undefined` (caught internally) |
+| Empty result set | Returns `[]` normally | Returns `undefined` (no matching row) |
 
 <Tip>
   Because these functions never throw, you can call them at the top level of a

@@ -1,7 +1,7 @@
 ---
 title: "TypeScript Types & Interfaces — Floralé Data Shapes"
 sidebarTitle: "Types"
-description: "Reference for Product, Category, and CartItem in Floralé — field definitions, the DB snake_case mapping, and the CartItem difference between types and store."
+description: "Reference for Product, Category, and CartItem in Floralé — field definitions, the snake_case mapping, and the CartItem split between types and store."
 ---
 
 Floralé's shared TypeScript types live in `types/index.ts` and form the contract between the Supabase database, the data-fetching layer, and the UI components. Understanding these shapes — especially the `categoryId` ↔ `category_id` mapping and the two variants of `CartItem` — will save you time when adding new features or debugging type errors.

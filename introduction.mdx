@@ -41,7 +41,7 @@ export interface Product {
   id: string;          // Unique slug, e.g. "corazon_red_oso"
   name: string;        // Display name shown on product cards
   description: string; // Long-form product description
-  price: number;       // Price in local currency (integer cents)
+  price: number;       // Price in local currency
   image: string;       // URL — Supabase Storage or relative path
   categoryId: string;  // Foreign key to Category.id
 }
@@ -63,6 +63,7 @@ export interface Category {
 export interface CartItem {
   productId: string;   // References Product.id
   quantity: number;    // Number of units added to cart
+  note: string;        // Optional per-item note from the customer
 }
 ```
 

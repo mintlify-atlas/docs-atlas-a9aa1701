@@ -129,14 +129,24 @@ Next.js is configured in `next.config.ts` to allow images from `*.supabase.co` s
 
 ```typescript
 // next.config.ts
+import type { NextConfig } from "next";
+
 const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
-      { protocol: 'https', hostname: 'images.unsplash.com' },
-      { protocol: 'https', hostname: '*.supabase.co' },
+      {
+        protocol: 'https',
+        hostname: 'images.unsplash.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.supabase.co',
+      },
     ],
   },
-}
+};
+
+export default nextConfig;
 ```
 
 ---

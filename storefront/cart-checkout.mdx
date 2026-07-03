@@ -264,14 +264,11 @@ The drawer slides in from the right with a spring animation. Clicking the backdr
 
 ### Opening the drawer
 
-Any component can open the drawer by calling `openDrawer()` or `toggleDrawer()` from the cart store:
+Any component can open the drawer by calling `openDrawer()` or `toggleDrawer()` from the cart store. The cart icon in the site `Header` is a `<Link>` that navigates directly to `/carrito`; the drawer is opened programmatically by whichever component calls `openDrawer()`:
 
 ```typescript
 const openDrawer = useCartStore((s) => s.openDrawer);
-// e.g., in the site header:
-<button onClick={openDrawer}>
-  <ShoppingBag />
-</button>
+openDrawer();
 ```
 
 ## Zustand cart store

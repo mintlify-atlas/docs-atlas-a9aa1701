@@ -69,7 +69,7 @@ Click the trash icon on a category row. The confirmation dialog explicitly warns
 After confirmation, `supabase.from('categories').delete().eq('id', id)` removes the row and the category disappears from the list.
 
 <Warning>
-  **Deleting a category orphans its products.** Floralé does not cascade-delete products when a category is removed. Any products whose `category_id` matches the deleted category will keep that `category_id` value in the database, but since no matching category row exists any more, those products will not appear under any group in the storefront or admin product list. Before deleting a category, reassign its products to a different category using the [product edit form](/admin/products).
+  **Deleting a category orphans its products.** Floralé does not cascade-delete products when a category is removed. Any products whose `category_id` matches the deleted category will keep that `category_id` value in the database, but since no matching category row exists any more, those products will not appear under any group in the storefront or admin product list. Before deleting a category, reassign its products to a different category using the [product edit form](admin/products).
 </Warning>
 
 ## Categories Table Schema
@@ -98,5 +98,5 @@ The database schema seeds two starter categories so new installations have somet
 These can be renamed, re-described, or deleted through the admin panel like any other category. Additional categories can be added at any time via `/admin/categories/new`.
 
 <Note>
-  For the full database schema including table definitions, foreign key constraints, RLS policies, and seed data, see the [Database Schema](/configuration/database-schema) reference page.
+  For the full database schema including table definitions, foreign key constraints, RLS policies, and seed data, see the [Database Schema](configuration/database-schema) reference page.
 </Note>

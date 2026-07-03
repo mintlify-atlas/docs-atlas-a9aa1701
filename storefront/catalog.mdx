@@ -183,6 +183,7 @@ export function ProductCard({
     <motion.article
       initial={{ opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-40px' }}
       transition={{ duration: 0.5, delay: index * 0.08 }}
     >
       <Link href={`/producto/${product.id}`}>
@@ -192,6 +193,8 @@ export function ProductCard({
             <Plus />
           </button>
         </div>
+      </Link>
+      <Link href={`/producto/${product.id}`}>
         <h3>{product.name}</h3>
         <p>{formatPrice(product.price)}</p>
       </Link>
@@ -213,7 +216,7 @@ export function ProductCard({
     Floating `+` circle in the bottom-right corner. Calls `addItem(product.id)` and shows a toast notification. Uses `e.stopPropagation()` so clicking it doesn't navigate to the product page.
   </Card>
   <Card title="Staggered animation" icon="sparkles">
-    Each card fades and slides up when it enters the viewport, with a delay of `index × 80ms` for a cascading reveal effect.
+    Each card fades and slides up when it enters the viewport (`whileInView`), with a delay of `index × 80ms` for a cascading reveal effect.
   </Card>
 </CardGroup>
 
